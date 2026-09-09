@@ -1,6 +1,9 @@
 import streamlit as st
 import plotly.graph_objects as go
-from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, run_budget_scenario, render_header, COLORS, YEARS_INT
+from common import (
+    inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, run_budget_scenario,
+    render_header, generate_scenario_pdf_report, COLORS, YEARS_INT,
+)
 
 st.set_page_config(page_title="Scenario Modeling", layout="wide")
 inject_css()
@@ -109,3 +112,22 @@ if len(backlog_a):
     )
 else:
     st.success("No backlog remains under this scenario \u2014 every due asset gets funded.")
+
+st.markdown("---")
+st.markdown("##### Export as a business case")
+st.caption("A funding-request document: the headline backlog delta between the two scenarios, parameters, "
+           "the backlog chart, and a 20-year outcome summary \u2014 built to hand to whoever approves the budget.")
+
+if st.button("Generate scenario business case PDF", type="primary"):
+    portfolios_in_scope = sorted(df["portfolio"].unique())
+    scope_label = f"{len(portfolios_in_scope)} portfolio(s), {len(df):,} components"
+    params_a = {"budget": budget_a, "growth": growth_a, "escalation": escalation_a, "risk_weight": risk_weight_a}
+    params_b = {"budget": budget_b, "growth": growth_b, "escalation": escalation_b, "risk_weight": risk_weight_b} \
+        if compare_on else {}
+    pdf_bytes = generate_scenario_pdf_report(
+        scope_label, params_a, params_b, results_a, results_b if compare_on else None, compare_on,
+    )
+    st.download_button(
+        "Download PDF", data=pdf_bytes, file_name="FM_Asset_Excellence_Scenario_Business_Case.pdf",
+        mime="application/pdf",
+    )
