@@ -134,24 +134,21 @@ def inject_css():
         .flow-step.tip .dot {{ background: {COLORS['warn']}; }}
         .flow-arrow {{ text-align: center; font-size: 12px; color: {COLORS['text_muted']}; padding: 2px 0; }}
         hr {{ border-color: {COLORS['border']}; }}
-        header {{
-            background-color: {COLORS['bg']} !important;
+        header[data-testid="stHeader"] {{
+            background: transparent !important;
+        }}
+        [data-testid="stToolbar"] {{
+            background: transparent !important;
+        }}
+        [data-testid="stDecoration"] {{
             background-image: none !important;
-        }}
-        [data-testid="stToolbar"], [data-testid="stDecoration"] {{
-            background-color: {COLORS['bg']} !important;
-            background-image: none !important;
-        }}
-        #MainMenu {{
-            visibility:hidden;
-        }}
-        .stAppDeployButton {{
-            display:none;
+            background: transparent !important;
         }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
 
 
 @st.cache_resource
