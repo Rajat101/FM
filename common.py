@@ -142,6 +142,12 @@ def inject_css():
             background-color: {COLORS['bg']} !important;
             background-image: none !important;
         }}
+        #MainMenu {
+            visibility:hidden;
+        }
+        .stAppDeployButton {
+            display:none;
+        }
         </style>
         """,
         unsafe_allow_html=True,
