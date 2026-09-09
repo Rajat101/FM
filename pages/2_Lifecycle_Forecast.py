@@ -35,6 +35,14 @@ fig.add_trace(go.Bar(x=by_year.index.astype(str), y=by_year.get("Opex", pd.Serie
                       name="OpEx", marker_color=COLORS["steel"]))
 fig.update_layout(barmode="stack", height=380, margin=dict(t=10, l=0, r=0, b=0), yaxis_title="$")
 show_chart(fig)
+opex_total = opex[YEARS].sum().sum()
+capex_total = capex[YEARS].sum().sum()
+opex_share = opex_total / max(capex_total + opex_total, 1) * 100
+st.caption(
+    f"OpEx totals {money(opex_total)} across the forecast window ({opex_share:.1f}% of combined spend) -- "
+    f"only {len(opex):,} of {len(df):,} components are tagged Opex in the source data, so its bar is "
+    f"genuinely too thin to see at this scale, not a rendering issue."
+)
 
 st.markdown("---")
 col1, col2 = st.columns(2)

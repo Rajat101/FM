@@ -224,7 +224,7 @@ def plotly_template():
     tmpl = pio.templates["plotly_dark"].to_plotly_json()
     tmpl["layout"]["paper_bgcolor"] = COLORS["bg"]
     tmpl["layout"]["plot_bgcolor"] = COLORS["surface"]
-    tmpl["layout"]["font"] = {"family": "IBM Plex Sans, sans-serif", "color": COLORS["text"]}
+    tmpl["layout"]["font"] = {"family": "-apple-system, Segoe UI, Roboto, Arial, sans-serif", "color": COLORS["text"]}
     tmpl["layout"]["colorway"] = [
         COLORS["accent"], COLORS["steel"], COLORS["good"], COLORS["warn"],
         COLORS["critical"], "#B08968", "#7A8B99",
@@ -242,11 +242,16 @@ def show_chart(fig, **kwargs):
         template="pannawonica",
         paper_bgcolor=COLORS["bg"],
         plot_bgcolor=COLORS["surface"],
-        font=dict(family="IBM Plex Sans, sans-serif", color=COLORS["text"]),
+        font=dict(family="-apple-system, Segoe UI, Roboto, Arial, sans-serif", color=COLORS["text"]),
     )
-    fig.update_xaxes(gridcolor=COLORS["border"], zerolinecolor=COLORS["border"], linecolor=COLORS["border"])
-    fig.update_yaxes(gridcolor=COLORS["border"], zerolinecolor=COLORS["border"], linecolor=COLORS["border"])
-    st.plotly_chart(fig, width="stretch", theme=None, **kwargs)
+    # automargin=True re-enables Plotly's automatic space allocation for tick
+    # labels -- without it, a fixed-zero margin (used elsewhere for tight
+    # layouts) silently clips y-axis numbers and long category names.
+    fig.update_xaxes(gridcolor=COLORS["border"], zerolinecolor=COLORS["border"], linecolor=COLORS["border"],
+                      automargin=True)
+    fig.update_yaxes(gridcolor=COLORS["border"], zerolinecolor=COLORS["border"], linecolor=COLORS["border"],
+                      automargin=True)
+    st.plotly_chart(fig, width="stretch", theme=None, config={"displayModeBar": False}, **kwargs)
 
 
 def _clean_workbook(df: pd.DataFrame) -> pd.DataFrame:
@@ -410,7 +415,155 @@ def compute_tipping_economics(df: pd.DataFrame, discount_rate: float, maint_base
     return d
 
 
-# ------------------------------------------------------------- scenario engine
+# ------------------------------------------------------------- recommendation engine
+def compute_recommendations(df: pd.DataFrame, life_maintain_max=0.55, life_plan_max=0.85,
+                             risk_high_threshold=40.0, budget_cap=None):
+    """Classify every component into a recommendation bucket using stakeholder-set
+    thresholds (not the fixed thresholds baked into the original 'decision' column).
+    Vectorised with np.select for speed across 100k+ rows."""
+    d = df.copy()
+    conditions = [
+        d["already_overdue"],
+        (d["life_fraction_used"] >= life_plan_max) & (d["risk_score"] >= risk_high_threshold),
+        (d["life_fraction_used"] >= life_plan_max),
+        (d["life_fraction_used"] >= life_maintain_max),
+    ]
+    choices = ["Replace Now (Overdue)", "Replace Now", "Defer Candidate", "Plan Renewal"]
+    d["recommendation"] = np.select(conditions, choices, default="Maintain")
+
+    if budget_cap:
+        replace_mask = d["recommendation"].isin(["Replace Now", "Replace Now (Overdue)"])
+        replace_df = d[replace_mask].sort_values("urgency_score", ascending=False)
+        cum_cost = replace_df["cost"].cumsum()
+        over_budget_ids = set(replace_df.loc[cum_cost > budget_cap, "cmp_id"])
+        d.loc[d["cmp_id"].isin(over_budget_ids), "recommendation"] = "Replace \u2014 Budget Constrained"
+
+    return d
+
+
+RECOMMENDATION_ORDER = [
+    "Replace Now (Overdue)", "Replace \u2014 Budget Constrained", "Replace Now",
+    "Plan Renewal", "Defer Candidate", "Maintain",
+]
+RECOMMENDATION_COLORS = {
+    "Replace Now (Overdue)": "#ED1C24",
+    "Replace \u2014 Budget Constrained": "#F5A623",
+    "Replace Now": "#5A69D6",
+    "Plan Renewal": "#8AA0F0",
+    "Defer Candidate": "#F5A623",
+    "Maintain": "#2FBF7A",
+}
+
+
+# ------------------------------------------------------------- PDF report
+def generate_pdf_report(scope_label: str, kpis: dict, insights: list, rec_summary: pd.DataFrame,
+                         rec_samples: dict, params: dict) -> bytes:
+    """Builds a summary PDF: KPIs, insights, recommendation counts/costs per
+    category, and a small top-N sample per category -- never the full row set."""
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage)
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    import io as _io
+    from datetime import datetime
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                             leftMargin=16 * mm, rightMargin=16 * mm)
+    styles = getSampleStyleSheet()
+    navy = rl_colors.HexColor("#2B3797")
+    muted = rl_colors.HexColor("#5B5F73")
+    title_style = ParagraphStyle("TitleFM", parent=styles["Title"], textColor=navy, fontSize=20)
+    h2 = ParagraphStyle("H2FM", parent=styles["Heading2"], textColor=navy, spaceBefore=14, spaceAfter=6)
+    body = ParagraphStyle("BodyFM", parent=styles["Normal"], fontSize=9.5, leading=13.5)
+    small_muted = ParagraphStyle("SmallMuted", parent=styles["Normal"], fontSize=8.5, textColor=muted)
+
+    story = []
+    try:
+        story.append(RLImage("assets/logo.png", width=28 * mm, height=9.4 * mm))
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass
+    story.append(Paragraph("FM Asset Excellence \u2014 Recommendation Report", title_style))
+    story.append(Paragraph(f"Scope: {scope_label}", small_muted))
+    story.append(Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", small_muted))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("Portfolio at a glance", h2))
+    kpi_rows = [[k, v] for k, v in kpis.items()]
+    kpi_table = Table(kpi_rows, colWidths=[75 * mm, 95 * mm])
+    kpi_table.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+        ("TEXTCOLOR", (0, 0), (0, -1), muted),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 4),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, rl_colors.HexColor("#E4E4EC")),
+    ]))
+    story.append(kpi_table)
+
+    if insights:
+        story.append(Paragraph("What this data is telling you", h2))
+        for ins in insights:
+            story.append(Paragraph(f"<b>{ins['headline']}</b>", body))
+            story.append(Paragraph(ins["detail"], small_muted))
+            story.append(Spacer(1, 4))
+
+    story.append(Paragraph("Recommendation summary", h2))
+    story.append(Paragraph(
+        f"Thresholds used: maintain below {params['life_maintain_max']*100:.0f}% of life used, "
+        f"plan renewal from {params['life_maintain_max']*100:.0f}\u2013{params['life_plan_max']*100:.0f}%, "
+        f"high risk \u2265 {params['risk_high_threshold']:.0f}/100"
+        + (f", budget cap {money(params['budget_cap'])}/yr" if params.get("budget_cap") else "") + ".",
+        small_muted,
+    ))
+    story.append(Spacer(1, 6))
+    summary_rows = [["Recommendation", "Assets", "Total cost"]] + [
+        [r["Recommendation"], f"{int(r['Assets']):,}", r["Total cost"]] for _, r in rec_summary.iterrows()
+    ]
+    summary_table = Table(summary_rows, colWidths=[80 * mm, 40 * mm, 50 * mm])
+    summary_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F5F6FA")]),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 5),
+        ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+    ]))
+    story.append(summary_table)
+
+    for category, sample_df in rec_samples.items():
+        if sample_df is None or len(sample_df) == 0:
+            continue
+        total_n = int(rec_summary.loc[rec_summary["Recommendation"] == category, "Assets"].values[0]) \
+            if (rec_summary["Recommendation"] == category).any() else len(sample_df)
+        story.append(Paragraph(f"{category} \u2014 top {len(sample_df)} of {total_n:,} by urgency", h2))
+        rows = [["Component", "Portfolio", "Condition", "Est. cost"]] + [
+            [str(r["component"])[:40], str(r["portfolio"])[:28], str(r["Condition"]), money(r["cost"])]
+            for _, r in sample_df.iterrows()
+        ]
+        t = Table(rows, colWidths=[62 * mm, 48 * mm, 22 * mm, 38 * mm])
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#E4E7F7")),
+            ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8F8FB")]),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+            ("TOPPADDING", (0, 0), (-1, -1), 4),
+            ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+        ]))
+        story.append(t)
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(
+        "This report summarises model estimates from FM Asset Excellence and is not a committed capital plan. "
+        "Full asset-level detail is available in the live app.", small_muted,
+    ))
+    doc.build(story)
+    return buf.getvalue()
 def run_budget_scenario(
     df: pd.DataFrame,
     annual_budget: float,

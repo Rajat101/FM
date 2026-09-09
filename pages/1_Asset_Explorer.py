@@ -80,6 +80,13 @@ if row["comment"]:
 
 st.markdown("#### Forecast profile, 2026\u20132045")
 years_vals = [row[y] for y in YEARS]
+nonzero = sum(1 for v in years_vals if v)
 fig = go.Figure(go.Bar(x=[str(y) for y in YEARS], y=years_vals, marker_color=COLORS["accent"]))
 fig.update_layout(height=280, margin=dict(t=10, l=0, r=0, b=0), yaxis_title="$")
+fig.update_xaxes(tickangle=-45, dtick=1)
 show_chart(fig)
+if nonzero <= 2:
+    st.caption(
+        f"This component is only scheduled for replacement {nonzero} time(s) in the 2026\u20132045 window "
+        f"\u2014 the mostly-empty chart is expected for a single asset, not a display issue."
+    )

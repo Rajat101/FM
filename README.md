@@ -29,6 +29,37 @@ data is sensitive.
 6. **Scenario Modeling** — set an annual budget, growth rate, deferral
    escalation, and prioritisation weighting; compare two scenarios
    side-by-side on backlog value, risk exposure, and spend.
+7. **Recommendations** (new in v1) — set your own life-used and risk
+   thresholds (plus an optional budget cap) and every asset is reclassified
+   live into Maintain / Plan Renewal / Replace Now / Overdue / Defer,
+   each shown with count, total cost, and a browsable table. Includes a
+   PDF export: KPIs, insights, and per-category counts/costs plus a
+   top-10-by-urgency sample -- never a full data dump.
+
+## v1 changelog
+
+- Fixed axis labels clipped across nearly every chart (condition
+  distribution, risk score distribution, top component groups, portfolio
+  stacked, deferred exposure) -- root cause was a forced zero left margin;
+  fixed centrally with `automargin=True` in the shared chart helper.
+- Removed Plotly's toolbar (the black bar) from every chart.
+- Added a caption clarifying OpEx's real scale (only 281 of 129,487 rows
+  are tagged Opex) instead of leaving it looking broken.
+- Added the Recommendations page and PDF export (see above).
+- Fixed a pandas `iterrows()` dtype bug that showed asset counts as
+  "3,422.0" instead of "3,422" in KPI cards and the PDF table.
+2. **Asset Explorer** — filterable/searchable table of every component with
+   a full drill-down per asset (condition, forecast profile, comments).
+3. **Lifecycle Forecast** — CapEx vs OpEx by year, by portfolio, by
+   component group, and deferred-renewal exposure.
+4. **Risk & Condition** — risk scoring methodology, condition distribution,
+   and the life-used-vs-risk decision matrix.
+5. **Economic Tipping Points** — adjustable maintain-vs-replace economics
+   (discount rate, maintenance escalation) with live-recomputed tipping
+   points per component group.
+6. **Scenario Modeling** — set an annual budget, growth rate, deferral
+   escalation, and prioritisation weighting; compare two scenarios
+   side-by-side on backlog value, risk exposure, and spend.
 
 ## Run locally
 
