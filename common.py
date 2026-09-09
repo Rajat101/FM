@@ -13,20 +13,21 @@ CURRENT_YEAR = 2026
 CONDITION_NUM = {"C1": 1, "C2": 2, "C3": 3, "C4": 4, "C5": 5}
 CONDITION_LIFE_USED = {"C1": 0.10, "C2": 0.40, "C3": 0.65, "C4": 0.85, "C5": 0.97}
 
-# ---------------------------------------------------------------- design tokens
+# ---------------------------------------------------------------- design tokens (Sodexo brand)
 COLORS = {
-    "bg": "#14171A",
-    "surface": "#1E2226",
-    "surface_2": "#262B30",
-    "border": "#33393F",
-    "text": "#EDEAE3",
-    "text_muted": "#9AA0A6",
-    "accent": "#C1622D",      # Pilbara iron-ore rust -- primary accent
-    "accent_soft": "#8A4A26",
-    "steel": "#4A7A94",       # secondary data series
-    "good": "#6B8F71",        # spinifex green
-    "warn": "#D4A017",        # amber
-    "critical": "#A83232",    # deep red
+    "bg": "#060B1F",
+    "bg2": "#0A1440",
+    "surface": "#101B4A",
+    "surface_2": "#16215A",
+    "border": "#2A3570",
+    "text": "#F4F6FC",
+    "text_muted": "#97A0CC",
+    "accent": "#5A69D6",      # brand-light blue -- primary accent
+    "accent_soft": "#2B3797", # Sodexo brand navy
+    "steel": "#8AA0F0",       # secondary data series
+    "good": "#2FBF7A",
+    "warn": "#F5A623",
+    "critical": "#ED1C24",    # Sodexo red -- reserved for overdue/critical only
 }
 
 DECISION_COLORS = {
@@ -44,27 +45,28 @@ def inject_css():
     st.markdown(
         f"""
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
-
         html, body, [class*="css"] {{
-            font-family: 'IBM Plex Sans', sans-serif;
+            font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
         }}
         .stApp {{
-            background-color: {COLORS['bg']};
+            background:
+                radial-gradient(ellipse 1400px 700px at 10% -10%, rgba(90,105,214,0.28), transparent),
+                linear-gradient(160deg, {COLORS['bg']} 0%, {COLORS['bg2']} 45%, {COLORS['accent_soft']} 150%);
             color: {COLORS['text']};
         }}
         section[data-testid="stSidebar"] {{
-            background-color: {COLORS['surface']};
+            background-color: {COLORS['bg2']};
             border-right: 1px solid {COLORS['border']};
         }}
         h1, h2, h3 {{
-            font-family: 'IBM Plex Sans', sans-serif;
-            font-weight: 600;
+            font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+            font-weight: 700;
             letter-spacing: -0.01em;
         }}
-        h1 {{ color: {COLORS['text']}; border-bottom: 2px solid {COLORS['accent']}; padding-bottom: 0.4rem; }}
+        h1 {{ color: {COLORS['text']}; }}
         [data-testid="stMetricValue"] {{
-            font-family: 'IBM Plex Mono', monospace;
+            font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
+            font-weight: 700;
             color: {COLORS['text']};
         }}
         [data-testid="stMetricLabel"] {{
@@ -75,16 +77,16 @@ def inject_css():
             border: 1px solid {COLORS['border']};
             border-left: 3px solid {COLORS['accent']};
             padding: 0.9rem 1rem;
-            border-radius: 2px;
+            border-radius: 10px;
         }}
-        .block-container {{ padding-top: 2rem; }}
+        .block-container {{ padding-top: 1.5rem; }}
         div[data-testid="stExpander"] {{
             background-color: {COLORS['surface']};
             border: 1px solid {COLORS['border']};
-            border-radius: 2px;
+            border-radius: 10px;
         }}
         .stTabs [data-baseweb="tab"] {{
-            font-family: 'IBM Plex Mono', monospace;
+            font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif;
             font-size: 0.85rem;
         }}
         .panel-note {{
@@ -94,12 +96,128 @@ def inject_css():
             color: {COLORS['text_muted']};
             font-size: 0.88rem;
             margin-bottom: 1rem;
+            border-radius: 0 10px 10px 0;
         }}
+        .insight-card {{
+            background: {COLORS['surface']};
+            border: 1px solid {COLORS['border']};
+            border-left: 3px solid {COLORS['accent']};
+            border-radius: 10px;
+            padding: 16px 18px;
+            height: 100%;
+        }}
+        .insight-card.warn {{ border-left-color: {COLORS['warn']}; }}
+        .insight-card.critical {{ border-left-color: {COLORS['critical']}; }}
+        .insight-card .headline {{
+            font-size: 15px; font-weight: 700; line-height: 1.4; margin-bottom: 6px; color: {COLORS['text']};
+        }}
+        .insight-card .detail {{
+            font-size: 13px; color: {COLORS['text_muted']}; line-height: 1.5;
+        }}
+        .fm-header {{ display: flex; align-items: center; gap: 16px; padding: 4px 0 18px; }}
+        .fm-logo-plate {{ background: #fff; border-radius: 10px; padding: 8px 12px; display: flex; align-items: center; }}
+        .fm-logo-plate img {{ height: 22px; display: block; }}
+        .fm-header .fm-title {{ font-size: 24px; font-weight: 800; color: {COLORS['text']}; margin: 0; }}
+        .fm-header .fm-subtitle {{ font-size: 13px; color: {COLORS['text_muted']}; margin: 2px 0 0; }}
+        .badge-tag {{
+            display: inline-block; font-size: 11px; letter-spacing: .04em; font-weight: 600;
+            color: {COLORS['text_muted']}; border: 1px solid {COLORS['border']}; border-radius: 100px;
+            padding: 4px 12px; margin-bottom: 18px;
+        }}
+        .flow-step {{
+            display: flex; align-items: center; gap: 10px; font-size: 12.5px; padding: 8px 12px;
+            background: {COLORS['surface_2']}; border-radius: 8px; border: 1px solid {COLORS['border']};
+            color: {COLORS['text']}; margin-bottom: 2px;
+        }}
+        .flow-step .dot {{ width: 7px; height: 7px; border-radius: 50%; background: {COLORS['accent']}; flex-shrink:0; }}
+        .flow-step.tip {{ border-color: {COLORS['warn']}; }}
+        .flow-step.tip .dot {{ background: {COLORS['warn']}; }}
+        .flow-arrow {{ text-align: center; font-size: 12px; color: {COLORS['text_muted']}; padding: 2px 0; }}
         hr {{ border-color: {COLORS['border']}; }}
         </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+@st.cache_resource
+def _logo_b64():
+    import base64
+    with open("assets/logo.png", "rb") as f:
+        return base64.b64encode(f.read()).decode()
+
+
+def render_header(subtitle: str):
+    try:
+        logo = _logo_b64()
+        logo_html = f'<div class="fm-logo-plate"><img src="data:image/png;base64,{logo}" alt="Sodexo"></div>'
+    except Exception:
+        logo_html = ""
+    st.markdown(
+        f"""
+        <div class="fm-header">
+            {logo_html}
+            <div>
+                <p class="fm-title">FM Asset Excellence</p>
+                <p class="fm-subtitle">{subtitle}</p>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_flow_diagram():
+    steps = [
+        ("Asset acquisition &mdash; CapEx", False),
+        ("In operation &mdash; routine O&amp;M / OpEx", False),
+        ("Asset ages, condition declines", False),
+        ("Failures more frequent and costly", False),
+        ("&#9733; Economic tipping point", True),
+        ("Replacement CapEx &mdash; new cycle begins", False),
+    ]
+    html = ""
+    for i, (label, is_tip) in enumerate(steps):
+        cls = "flow-step tip" if is_tip else "flow-step"
+        html += f'<div class="{cls}"><span class="dot"></span>{label}</div>'
+        if i < len(steps) - 1:
+            html += '<div class="flow-arrow">&darr;</div>'
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def generate_insights(df: pd.DataFrame):
+    """Real, data-driven insight callouts -- not sample copy."""
+    insights = []
+    n = len(df)
+    overdue = df["already_overdue"].sum()
+    if overdue > 0:
+        pct = overdue / n * 100
+        insights.append({
+            "level": "critical",
+            "headline": f"{pct:.0f}% of assets are already past due",
+            "detail": f"{overdue:,} components have missed their calculated renewal year "
+                      f"&mdash; {money(df.loc[df['already_overdue'],'cost'].sum())} in deferred exposure sitting unfunded today.",
+        })
+
+    reset_risk = df["condition_reset_risk"].sum()
+    if reset_risk > 0:
+        insights.append({
+            "level": "warn",
+            "headline": "Recently-surveyed equipment may be under-forecast",
+            "detail": f"{reset_risk:,} components were rated in good condition on a recent survey but have a short "
+                      f"base life &mdash; the model may be resetting their clock rather than tracking true age.",
+        })
+
+    by_port = df.groupby("portfolio")[YEARS].sum().sum(axis=1).sort_values(ascending=False)
+    if len(by_port) >= 2:
+        top2_share = by_port.head(2).sum() / by_port.sum() * 100
+        insights.append({
+            "level": "normal",
+            "headline": f"{by_port.index[0]} and {by_port.index[1]} drive {top2_share:.0f}% of forecast spend",
+            "detail": "A natural place to focus renewal planning first, given how concentrated the 20-year "
+                      "CapEx forecast is across just two portfolios.",
+        })
+    return insights[:3]
 
 
 def plotly_template():
@@ -235,7 +353,7 @@ def load_data() -> pd.DataFrame:
     st.sidebar.markdown("### Data source")
     uploaded = st.sidebar.file_uploader("Upload Lifecycle_PAN.xlsx", type=["xlsx"])
     if uploaded is None:
-        st.title("Pannawonica Asset Lifecycle & Decision Model")
+        render_header("Upload your workbook to begin")
         st.info(
             "Upload the **Lifecycle_PAN.xlsx** workbook in the sidebar to load the model. "
             "Nothing is stored beyond this session -- the file is processed in memory only."

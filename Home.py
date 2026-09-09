@@ -1,118 +1,171 @@
 import streamlit as st
-import plotly.express as px
 import plotly.graph_objects as go
+import plotly.express as px
+import numpy as np
 import pandas as pd
-from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, COLORS, DECISION_COLORS, CONFIDENCE_COLORS, YEARS
+from common import (
+    inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header,
+    render_flow_diagram, generate_insights, run_budget_scenario, compute_tipping_economics,
+    COLORS, DECISION_COLORS, CONFIDENCE_COLORS, YEARS, YEARS_INT,
+)
 
-st.set_page_config(page_title="Pannawonica Asset Lifecycle", page_icon=":material/insights:", layout="wide")
+st.set_page_config(page_title="FM Asset Excellence", page_icon=":material/insights:", layout="wide")
 inject_css()
 plotly_template()
 
 df_all = load_data()
-
-st.title("Pannawonica Asset Lifecycle & Decision Model")
-st.caption(
-    "Portfolio-wide view across 129,487 tracked components in accommodation, residential, "
-    "commercial and town properties."
-)
+render_header("Facilities asset lifecycle and capital decision model — Pannawonica")
+st.markdown('<span class="badge-tag">LIVE MODEL — figures update as you filter or upload a new workbook</span>', unsafe_allow_html=True)
 
 df = sidebar_filters(df_all, key_prefix="home")
 
 st.sidebar.markdown("---")
 st.sidebar.markdown(
-    f'<div class="panel-note">Built from <b>Lifecycle_PAN.xlsx</b>. '
-    f'Forecast window 2026&ndash;2045. Figures shown are model estimates, not commitments.</div>',
+    '<div class="panel-note">Forecast window 2026&ndash;2045. Figures shown are model estimates, not commitments.</div>',
     unsafe_allow_html=True,
 )
 
-# ---------------------------------------------------------------- headline KPIs
+# ---------------------------------------------------------------- insights banner
+st.markdown("##### What this data is telling you")
+insights = generate_insights(df)
+cols = st.columns(len(insights)) if insights else []
+for col, ins in zip(cols, insights):
+    with col:
+        st.markdown(
+            f"""<div class="insight-card {ins['level']}">
+                    <div class="headline">{ins['headline']}</div>
+                    <div class="detail">{ins['detail']}</div>
+                </div>""",
+            unsafe_allow_html=True,
+        )
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- KPI row
+st.markdown("##### Portfolio at a glance")
 n = len(df)
 overdue = df[df["already_overdue"]]
 total_20yr = df[YEARS].sum().sum()
 deferred_val = df["deferred"].sum()
-beyond_window = df["renewal_beyond_window"].sum()
 avg_condition = df["condition_numeric"].mean()
 
-c1, c2, c3, c4, c5, c6 = st.columns(6)
+c1, c2, c3, c4, c5 = st.columns(5)
 c1.metric("Tracked components", f"{n:,}")
 c2.metric("20-yr forecast CapEx", money(total_20yr))
-c3.metric("Overdue assets", f"{len(overdue):,}", help="next_renewal_year before 2026")
+c3.metric("Overdue assets", f"{len(overdue):,}")
 c4.metric("Deferred exposure", money(deferred_val))
-c5.metric("Beyond forecast window", f"{beyond_window:,}", help="Renewal due after 2045")
-c6.metric("Avg. condition", f"C{avg_condition:.1f}")
+c5.metric("Avg. condition", f"C{avg_condition:.1f}")
 
-c7, c8, c9, c10, c11, c12 = st.columns(6)
-c7.metric("Properties", f"{df['property code'].nunique():,}")
-c8.metric("Sites", f"{df['site'].nunique():,}")
-c9.metric("Survey data missing", f"{df['survey_missing'].sum():,}", help="cmp_survey_year = 0")
-c10.metric("C-model reset risk", f"{df['condition_reset_risk'].sum():,}",
-           help="Recently-surveyed, good-condition, short-life components -- see SME note")
-c11.metric("High-risk assets", f"{(df['risk_score']>=40).sum():,}", help="Risk score >= 40 / 100")
-c12.metric("Human overrides found", f"{df['has_replace_override'].sum():,}", help='"Replace by [year]" in comments')
+st.markdown("<br>", unsafe_allow_html=True)
 
-st.markdown("---")
-
-# ---------------------------------------------------------------- CapEx forecast + decision mix
-col_left, col_right = st.columns([2, 1])
-
-with col_left:
-    st.subheader("CapEx forecast, 2026\u20132045")
-    yearly = df[YEARS].sum().reset_index()
-    yearly.columns = ["year", "cost"]
-    fig = go.Figure()
-    fig.add_trace(go.Bar(x=yearly["year"], y=yearly["cost"], marker_color=COLORS["accent"], name="Forecast CapEx"))
-    fig.update_layout(height=380, margin=dict(t=10, l=0, r=0, b=0), yaxis_title="$", xaxis_title=None,
-                       showlegend=False)
-    show_chart(fig)
-
-with col_right:
-    st.subheader("Decision mix")
-    dec_counts = df["decision"].value_counts().reindex(DECISION_COLORS.keys()).dropna()
-    fig2 = go.Figure(go.Pie(
-        labels=dec_counts.index, values=dec_counts.values, hole=0.55,
-        marker_colors=[DECISION_COLORS[k] for k in dec_counts.index],
-        textinfo="percent",
-    ))
-    fig2.update_layout(height=380, margin=dict(t=10, l=0, r=0, b=0),
-                        legend=dict(orientation="h", yanchor="bottom", y=-0.25))
-    show_chart(fig2)
-
-st.markdown("---")
-
-col_a, col_b = st.columns(2)
-with col_a:
-    st.subheader("CapEx by portfolio")
-    by_port = df.groupby("portfolio")[YEARS].sum().sum(axis=1).sort_values(ascending=True)
-    fig3 = go.Figure(go.Bar(
-        x=by_port.values, y=by_port.index, orientation="h", marker_color=COLORS["steel"]
-    ))
-    fig3.update_layout(height=340, margin=dict(t=10, l=0, r=0, b=0), xaxis_title="20-yr forecast $")
-    show_chart(fig3)
-
-with col_b:
-    st.subheader("Data confidence across the portfolio")
-    conf_counts = df["data_confidence"].value_counts().reindex(["High", "Medium", "Low"]).fillna(0)
-    fig4 = go.Figure(go.Bar(
-        x=conf_counts.index, y=conf_counts.values,
-        marker_color=[CONFIDENCE_COLORS[k] for k in conf_counts.index]
-    ))
-    fig4.update_layout(height=340, margin=dict(t=10, l=0, r=0, b=0), yaxis_title="Components")
-    show_chart(fig4)
-
+# ---------------------------------------------------------------- scenario hero
 st.markdown(
-    '<div class="panel-note">Confidence combines missing survey data, a uniform construction '
-    'year across a whole property (consistent with a system default, per the SME notes), and the '
-    'condition-reset pattern flagged for short-life, recently-surveyed equipment. It is a heuristic, '
-    'not a certainty &mdash; see the Risk &amp; Condition page for the full method.</div>',
+    f"""
+    <div style="background: linear-gradient(135deg, {COLORS['surface_2']}, {COLORS['surface']});
+                border: 1px solid {COLORS['border']}; border-radius: 16px; padding: 24px 28px 8px; margin-bottom: 8px;">
+        <h4 style="margin:0; color:{COLORS['text']};">Scenario &amp; forecast — set your own parameters</h4>
+        <p style="font-size:13px; color:{COLORS['text_muted']}; margin:4px 0 0;">
+            Move any control below and the forecast redraws live against your uploaded data.
+        </p>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
-st.markdown("---")
-st.subheader("Component groups by forecast spend")
-by_group = df.groupby("comp. group")[YEARS].sum().sum(axis=1).sort_values(ascending=False)
-fig5 = px.treemap(
-    names=by_group.index, parents=[""] * len(by_group), values=by_group.values,
-    color=by_group.values, color_continuous_scale=[COLORS["surface_2"], COLORS["accent"]],
+hero_l, hero_r = st.columns([1, 2])
+with hero_l:
+    st.write("")
+    h_budget = st.slider("Annual budget ($M)", 1.0, 15.0, 4.0, 0.5, key="hero_budget")
+    h_growth = st.slider("Budget growth / yr (%)", -10.0, 15.0, 0.0, 1.0, key="hero_growth") / 100
+    h_esc = st.slider("Deferral cost escalation / yr (%)", 0.0, 25.0, 6.0, 1.0, key="hero_esc") / 100
+    h_risk = st.slider("Priority: risk vs. cost-efficiency", 0.0, 1.0, 0.7, 0.05, key="hero_risk")
+
+hero_results, hero_backlog = run_budget_scenario(
+    df, h_budget * 1_000_000, h_growth, YEARS_INT, h_esc, h_risk
 )
-fig5.update_layout(height=420, margin=dict(t=10, l=0, r=0, b=0), coloraxis_showscale=False)
-show_chart(fig5)
+
+with hero_r:
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=hero_results["year"], y=hero_results["backlog_value"] / 1_000_000,
+        line=dict(color=COLORS["accent"], width=3), fill="tozeroy", name="Unfunded backlog",
+    ))
+    fig.update_layout(height=280, margin=dict(t=10, l=0, r=0, b=0), yaxis_title="Backlog ($M)", showlegend=False)
+    show_chart(fig)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Backlog by 2045", money(hero_results.iloc[-1]["backlog_value"]))
+    total_due = df["cost"].sum()
+    funded_pct = hero_results["spend"].sum() / max(total_due, 1) * 100
+    m2.metric("Total funded (20yr)", f"{min(funded_pct, 100):.0f}%")
+    m3.metric("Assets still unfunded", f"{hero_results.iloc[-1]['assets_backlog']:,.0f}")
+
+st.markdown(
+    '<p style="text-align:right;"><a href="Scenario_Modeling" target="_self" style="font-size:13px;">'
+    'Open full scenario comparison &rarr;</a></p>',
+    unsafe_allow_html=True,
+)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- uncovering the mechanics
+st.markdown("##### Uncovering the mechanics behind the numbers")
+v1, v2, v3 = st.columns(3)
+
+with v1:
+    st.markdown(
+        f"""<div style="background:{COLORS['surface']}; border:1px solid {COLORS['border']}; border-radius:14px; padding:18px;">
+        <b>Asset lifecycle flow</b><br>
+        <span style="font-size:12px; color:{COLORS['text_muted']};">Every asset moves through this cycle &mdash;
+        the tipping point is where cost stops favoring repair.</span></div>""",
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    render_flow_diagram()
+
+with v2:
+    st.markdown(
+        f"""<div style="background:{COLORS['surface']}; border:1px solid {COLORS['border']}; border-radius:14px; padding:18px; margin-bottom:8px;">
+        <b>Condition decay curve</b><br>
+        <span style="font-size:12px; color:{COLORS['text_muted']};">Typical condition against asset age, based on this portfolio's average component life.</span></div>""",
+        unsafe_allow_html=True,
+    )
+    avg_life = df["base_life"].mean()
+    age_frac = np.linspace(0, 1.3, 60)
+    condition_pct = 100 * np.exp(-1.6 * age_frac)
+    fig = go.Figure(go.Scatter(x=age_frac * avg_life, y=condition_pct, line=dict(color=COLORS["accent"], width=3),
+                                fill="tozeroy"))
+    fig.update_layout(height=230, margin=dict(t=10, l=0, r=0, b=0), xaxis_title="Age (years)", yaxis_title="Condition (%)")
+    show_chart(fig)
+
+with v3:
+    st.markdown(
+        f"""<div style="background:{COLORS['surface']}; border:1px solid {COLORS['border']}; border-radius:14px; padding:18px; margin-bottom:8px;">
+        <b>Cost crossover</b><br>
+        <span style="font-size:12px; color:{COLORS['text_muted']};">Where rising maintenance cost overtakes the cost of replacing, on average.</span></div>""",
+        unsafe_allow_html=True,
+    )
+    d = compute_tipping_economics(df, 0.07, 0.02, 3.0)
+    life_pct = np.linspace(0, 1.5, 60)
+    avg_cost = d["cost"].mean()
+    avg_eac = d["eac_replace_live"].mean()
+    maint_curve = 0.02 * avg_cost * np.exp(3.0 * life_pct)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=life_pct * 100, y=maint_curve, name="Maintenance", line=dict(color=COLORS["warn"], width=3)))
+    fig.add_trace(go.Scatter(x=life_pct * 100, y=[avg_eac] * len(life_pct), name="Replacement (EAC)",
+                              line=dict(color=COLORS["critical"], width=2, dash="dash")))
+    fig.update_layout(height=230, margin=dict(t=30, l=0, r=0, b=0), xaxis_title="% of life used", yaxis_title="$/yr",
+                       legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0, font=dict(size=10)))
+    show_chart(fig)
+
+st.markdown("<br>", unsafe_allow_html=True)
+
+# ---------------------------------------------------------------- top priority assets (real data)
+st.markdown("##### Highest-priority assets right now")
+top_priority = df.sort_values("urgency_score", ascending=False).head(8)[
+    ["component", "portfolio", "Condition", "decision", "cost"]
+]
+st.dataframe(
+    top_priority,
+    width="stretch", hide_index=True,
+    column_config={"cost": st.column_config.NumberColumn("Est. cost", format="$%.0f")},
+)

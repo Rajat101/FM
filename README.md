@@ -1,9 +1,9 @@
-# Pannawonica Asset Lifecycle & Decision Model
+# FM Asset Excellence
 
-A multi-page Streamlit app that cleans a lifecycle asset export, computes
-risk scores, economic tipping points, and a maintain / renew / replace /
-defer decision for every component, then lets you run budget what-if
-scenarios across a 20-year horizon.
+A Sodexo-branded, multi-page Streamlit app that cleans a lifecycle asset
+export, surfaces plain-language insights, computes risk scores and economic
+tipping points, and lets stakeholders set their own budget/escalation
+parameters and watch the 20-year forecast respond live.
 
 **No data is committed to this repo.** The app takes the workbook via an
 in-browser file upload and processes it entirely in memory, in your own
@@ -13,8 +13,10 @@ data is sensitive.
 
 ## Pages
 
-1. **Home** — upload the workbook here; portfolio-wide KPIs, CapEx
-   forecast, decision mix, data confidence overview.
+1. **Home** — upload the workbook here; insight banner (auto-surfaced
+   findings), portfolio KPIs, a live scenario/forecast hero you can tune
+   right on the page, and the three "how it works" visuals (lifecycle flow,
+   condition decay curve, cost crossover).
 2. **Asset Explorer** — filterable/searchable table of every component with
    a full drill-down per asset (condition, forecast profile, comments).
 3. **Lifecycle Forecast** — CapEx vs OpEx by year, by portfolio, by
