@@ -134,17 +134,18 @@ def inject_css():
         .flow-step.tip .dot {{ background: {COLORS['warn']}; }}
         .flow-arrow {{ text-align: center; font-size: 12px; color: {COLORS['text_muted']}; padding: 2px 0; }}
         hr {{ border-color: {COLORS['border']}; }}
-        #MainMenu {{ visibility: hidden; }}
-        footer {{ visibility: hidden; }}
-        header {{ visibility: hidden; }}
-        [data-testid="collapsedControl"] {{
-            visibility: visible;
-            display: block;
+        header[data-testid="stHeader"] {{
+           background-color: {COLORS['bg']} !important;
+           background-image: none !important;
+        }}
+        [data-testid="stToolbar"] {{
+            background-color: {COLORS['bg']} !important;
+        }}
+        [data-testid="stDecoration"] {{
+            background-image: none !important;
+            background-color: {COLORS['bg']} !important;
         }}
         </style>
-        """,
-        unsafe_allow_html=True,
-    )
     
 
 
