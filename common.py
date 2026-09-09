@@ -731,6 +731,423 @@ def generate_scenario_pdf_report(scope_label: str, params_a: dict, params_b: dic
     return buf.getvalue()
 
 
+def generate_component_group_pdf(scope_label: str, group_name: str, sub: pd.DataFrame, params: dict,
+                                  top_assets: pd.DataFrame) -> bytes:
+    """Component-Group Replacement Business Case: focused on one asset type, e.g. an equipment fleet."""
+    import io as _io
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+                                     Image as RLImage, HRFlowable)
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    navy = rl_colors.HexColor("#2B3797")
+    muted = rl_colors.HexColor("#5B5F73")
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("TitleCG", parent=styles["Title"], textColor=navy, fontSize=19)
+    h2 = ParagraphStyle("H2CG", parent=styles["Heading2"], textColor=navy, fontSize=13, spaceBefore=14, spaceAfter=6)
+    body = ParagraphStyle("BodyCG", parent=styles["Normal"], fontSize=9.8, leading=14.5)
+    small = ParagraphStyle("SmallCG", parent=styles["Normal"], fontSize=8.6, leading=12, textColor=muted)
+    callout_num = ParagraphStyle("CalloutCG", parent=styles["Normal"], fontSize=22, leading=26, fontName="Helvetica-Bold")
+
+    past_tip = sub[sub["life_fraction_used"] >= sub["tipping_life_fraction_live"]]
+    n_total = len(sub)
+    n_past = len(past_tip)
+    cost_exposure = past_tip["cost"].sum()
+
+    life_pct = np.linspace(0, 1.5, 60)
+    avg_cost = sub["cost"].mean()
+    avg_eac = sub["eac_replace_live"].mean()
+    maint_curve = params["maint_base_pct"] * avg_cost * np.exp(params["maint_growth_k"] * life_pct)
+    tip_x = sub["tipping_life_fraction_live"].mean()
+
+    fig, ax = plt.subplots(figsize=(6.6, 3.0), dpi=160)
+    ax.plot(life_pct * 100, maint_curve, color="#D4A017", linewidth=2.4, label="Rising maintenance cost")
+    ax.axhline(avg_eac, color="#5A69D6", linewidth=2.2, linestyle="--", label="EAC of replacement")
+    ax.axvline(tip_x * 100, color="#ED1C24", linewidth=1.6, linestyle=":", label=f"Tipping point ({tip_x*100:.0f}%)")
+    ax.set_xlabel("% of base life used")
+    ax.set_ylabel("$ / year")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False, loc="upper left", fontsize=8.5)
+    ax.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+    chart_buf = _io.BytesIO()
+    fig.savefig(chart_buf, format="png")
+    plt.close(fig)
+    chart_buf.seek(0)
+
+    story = []
+    try:
+        story.append(RLImage("assets/logo.png", width=28 * mm, height=9.4 * mm))
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass
+    story.append(Paragraph(f"{group_name} \u2014 Replacement Business Case", title_style))
+    story.append(Paragraph(f"Scope: {scope_label}", small))
+    story.append(Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", small))
+    story.append(Spacer(1, 12))
+
+    story.append(Paragraph("The headline number", h2))
+    story.append(Paragraph(f"{money(cost_exposure)} in replacement cost is already past its tipping point", callout_num))
+    story.append(Paragraph(
+        f"{n_past:,} of {n_total:,} units in this component group ({n_past/max(n_total,1)*100:.0f}%) have "
+        f"already crossed the point where replacing is cheaper than continuing to maintain, under the "
+        f"assumptions below.", body,
+    ))
+
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=0.6, color=rl_colors.HexColor("#DADCE8")))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("Assumptions used", h2))
+    assum_rows = [
+        ["Discount rate", f"{params['discount_rate']*100:.1f}%"],
+        ["Starting maintenance cost", f"{params['maint_base_pct']*100:.1f}% of replacement cost/yr"],
+        ["Maintenance escalation factor", f"{params['maint_growth_k']:.2f}"],
+    ]
+    at = Table(assum_rows, colWidths=[90 * mm, 75 * mm])
+    at.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5), ("TEXTCOLOR", (0, 0), (0, -1), muted),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, rl_colors.HexColor("#E4E4EC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(at)
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph("Maintain-vs-replace curve for this group", h2))
+    story.append(RLImage(chart_buf, width=160 * mm, height=72.7 * mm))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(f"Highest-priority units in {group_name}", h2))
+    rows = [["Component", "Portfolio", "Condition", "Life used", "Est. cost"]] + [
+        [str(r["component"])[:32], str(r["portfolio"])[:26], str(r["Condition"]),
+         f"{r['life_fraction_used']*100:.0f}%", money(r["cost"])]
+        for _, r in top_assets.iterrows()
+    ]
+    tt = Table(rows, colWidths=[48 * mm, 42 * mm, 22 * mm, 22 * mm, 31 * mm])
+    tt.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy), ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8.7),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F5F6FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(tt)
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        "This report is a model estimate from FM Asset Excellence, not a committed capital plan.", small,
+    ))
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                             leftMargin=18 * mm, rightMargin=18 * mm)
+    doc.build(story)
+    return buf.getvalue()
+
+
+def generate_data_quality_audit_pdf(scope_label: str, kpis: dict, confidence_by_portfolio: pd.DataFrame,
+                                     confidence_by_group: pd.DataFrame, gaps: pd.DataFrame,
+                                     faults: pd.DataFrame, overrides: pd.DataFrame) -> bytes:
+    """Data Quality Audit: aimed inward, at whoever owns the source data -- a punch list for re-surveying."""
+    import io as _io
+    from datetime import datetime
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    navy = rl_colors.HexColor("#2B3797")
+    muted = rl_colors.HexColor("#5B5F73")
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("TitleDQ", parent=styles["Title"], textColor=navy, fontSize=19)
+    h2 = ParagraphStyle("H2DQ", parent=styles["Heading2"], textColor=navy, fontSize=13, spaceBefore=14, spaceAfter=6)
+    small = ParagraphStyle("SmallDQ", parent=styles["Normal"], fontSize=8.6, leading=12, textColor=muted)
+    body = ParagraphStyle("BodyDQ", parent=styles["Normal"], fontSize=9.6, leading=14)
+
+    def styled_table(rows, col_widths, header_bg=None):
+        t = Table(rows, colWidths=col_widths)
+        t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), header_bg or navy),
+            ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8.7),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F5F6FA")]),
+            ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        return t
+
+    story = []
+    try:
+        story.append(RLImage("assets/logo.png", width=28 * mm, height=9.4 * mm))
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass
+    story.append(Paragraph("Data Quality Audit", title_style))
+    story.append(Paragraph(f"Scope: {scope_label}", small))
+    story.append(Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", small))
+    story.append(Paragraph(
+        "This report flags where the underlying source data is weakest, so it can be prioritised for a "
+        "real survey rather than relying on system defaults.", body,
+    ))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("At a glance", h2))
+    kpi_rows = [[k, v] for k, v in kpis.items()]
+    kt = Table(kpi_rows, colWidths=[85 * mm, 85 * mm])
+    kt.setStyle(TableStyle([
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5), ("TEXTCOLOR", (0, 0), (0, -1), muted),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+        ("LINEBELOW", (0, 0), (-1, -1), 0.4, rl_colors.HexColor("#E4E4EC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+    ]))
+    story.append(kt)
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Confidence by portfolio", h2))
+    rows = [["Portfolio", "High", "Medium", "Low"]] + confidence_by_portfolio.reset_index().values.tolist()
+    rows = [rows[0]] + [[str(r[0])] + [f"{int(v):,}" for v in r[1:]] for r in rows[1:]]
+    story.append(styled_table(rows, [65 * mm, 35 * mm, 35 * mm, 35 * mm]))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("Confidence by component group (top 10 by volume)", h2))
+    rows2 = [["Component group", "High", "Medium", "Low"]] + confidence_by_group.reset_index().values.tolist()
+    rows2 = [rows2[0]] + [[str(r[0])] + [f"{int(v):,}" for v in r[1:]] for r in rows2[1:]]
+    story.append(styled_table(rows2, [65 * mm, 35 * mm, 35 * mm, 35 * mm]))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(f"Biggest gaps \u2014 top {len(gaps)} highest-cost Low/Medium confidence assets", h2))
+    rows3 = [["Component", "Portfolio", "Confidence", "Cost"]] + [
+        [str(r["component"])[:32], str(r["portfolio"])[:26], r["data_confidence"], money(r["cost"])]
+        for _, r in gaps.iterrows()
+    ]
+    story.append(styled_table(rows3, [55 * mm, 45 * mm, 28 * mm, 42 * mm]))
+
+    if len(faults):
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"Active fault flags on file (top {len(faults)})", h2))
+        rows4 = [["Component", "Portfolio", "Comment"]] + [
+            [str(r["component"])[:28], str(r["portfolio"])[:22], str(r["comment"])[:60]]
+            for _, r in faults.iterrows()
+        ]
+        story.append(styled_table(rows4, [42 * mm, 38 * mm, 90 * mm], header_bg=rl_colors.HexColor("#C23A3A")))
+
+    if len(overrides):
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"Human overrides on file (top {len(overrides)})", h2))
+        rows5 = [["Component", "System says", "Override says"]] + [
+            [str(r["component"])[:40], str(int(r["next_renewal_year"])), str(int(r["replace_override_year"]))]
+            for _, r in overrides.iterrows()
+        ]
+        story.append(styled_table(rows5, [90 * mm, 40 * mm, 40 * mm]))
+
+    story.append(Spacer(1, 12))
+    story.append(Paragraph(
+        "Confidence combines missing survey data, a uniform construction year across a whole property, and "
+        "the C-model condition-reset pattern. It is a heuristic, not a certainty.", small,
+    ))
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                             leftMargin=18 * mm, rightMargin=18 * mm)
+    doc.build(story)
+    return buf.getvalue()
+
+
+def generate_work_order_pdf(scope_label: str, window_label: str, due_df: pd.DataFrame,
+                             by_portfolio: pd.DataFrame, max_rows_per_portfolio: int = 40) -> bytes:
+    """Next-12-Months Work Order Report: operational, grouped by portfolio, for whoever dispatches the work."""
+    import io as _io
+    from datetime import datetime
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    navy = rl_colors.HexColor("#2B3797")
+    muted = rl_colors.HexColor("#5B5F73")
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("TitleWO", parent=styles["Title"], textColor=navy, fontSize=19)
+    h2 = ParagraphStyle("H2WO", parent=styles["Heading2"], textColor=navy, fontSize=13, spaceBefore=14, spaceAfter=6)
+    h3 = ParagraphStyle("H3WO", parent=styles["Heading3"], textColor=navy, fontSize=10.5, spaceBefore=10, spaceAfter=4)
+    small = ParagraphStyle("SmallWO", parent=styles["Normal"], fontSize=8.6, leading=12, textColor=muted)
+    body = ParagraphStyle("BodyWO", parent=styles["Normal"], fontSize=9.6, leading=14)
+
+    story = []
+    try:
+        story.append(RLImage("assets/logo.png", width=28 * mm, height=9.4 * mm))
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass
+    story.append(Paragraph("Work Order Report", title_style))
+    story.append(Paragraph(f"Window: {window_label}", small))
+    story.append(Paragraph(f"Scope: {scope_label}", small))
+    story.append(Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", small))
+    story.append(Paragraph(
+        f"{len(due_df):,} components due, {money(due_df['cost'].sum())} total, across "
+        f"{due_df['portfolio'].nunique()} portfolio(s).", body,
+    ))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("Summary by portfolio", h2))
+    rows = [["Portfolio", "Components", "Total cost"]] + [
+        [p, f"{int(r['components']):,}", money(r["cost"])] for p, r in by_portfolio.iterrows()
+    ]
+    st_table = Table(rows, colWidths=[85 * mm, 42 * mm, 43 * mm])
+    st_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy), ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F5F6FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(st_table)
+
+    for portfolio in by_portfolio.index:
+        subset = due_df[due_df["portfolio"] == portfolio].sort_values("urgency_score", ascending=False)
+        shown = subset.head(max_rows_per_portfolio)
+        story.append(Spacer(1, 10))
+        story.append(Paragraph(f"{portfolio} \u2014 {len(subset):,} due, {money(subset['cost'].sum())}", h3))
+        rows2 = [["Component", "Site", "Condition", "Est. cost"]] + [
+            [str(r["component"])[:38], str(r.get("site", ""))[:24], str(r["Condition"]), money(r["cost"])]
+            for _, r in shown.iterrows()
+        ]
+        t2 = Table(rows2, colWidths=[70 * mm, 45 * mm, 22 * mm, 33 * mm])
+        t2.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), rl_colors.HexColor("#E4E7F7")),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"), ("FONTSIZE", (0, 0), (-1, -1), 8.5),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F8F8FB")]),
+            ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+            ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(t2)
+        if len(subset) > max_rows_per_portfolio:
+            story.append(Paragraph(f"Showing top {max_rows_per_portfolio} of {len(subset):,} by urgency.", small))
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                             leftMargin=18 * mm, rightMargin=18 * mm)
+    doc.build(story)
+    return buf.getvalue()
+
+
+def generate_asset_dossier_pdf(row: pd.Series) -> bytes:
+    """Single-Asset Dossier: everything about one component, one page, for the 'why does this need $50K' question."""
+    import io as _io
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, Image as RLImage
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    navy = rl_colors.HexColor("#2B3797")
+    muted = rl_colors.HexColor("#5B5F73")
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("TitleAD", parent=styles["Title"], textColor=navy, fontSize=17)
+    h2 = ParagraphStyle("H2AD", parent=styles["Heading2"], textColor=navy, fontSize=12.5, spaceBefore=12, spaceAfter=5)
+    small = ParagraphStyle("SmallAD", parent=styles["Normal"], fontSize=8.6, leading=12, textColor=muted)
+    body = ParagraphStyle("BodyAD", parent=styles["Normal"], fontSize=9.6, leading=14)
+
+    years = [str(y) for y in range(2026, 2046)]
+    values = [row.get(y, 0) or 0 for y in years]
+    fig, ax = plt.subplots(figsize=(6.6, 2.2), dpi=160)
+    ax.bar(years, values, color="#5A69D6")
+    ax.set_ylabel("$")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.tick_params(axis="x", rotation=45, labelsize=7)
+    plt.tight_layout()
+    chart_buf = _io.BytesIO()
+    fig.savefig(chart_buf, format="png")
+    plt.close(fig)
+    chart_buf.seek(0)
+
+    def kv_table(pairs, col_widths=(55 * mm, 115 * mm)):
+        t = Table([[k, v] for k, v in pairs], colWidths=list(col_widths))
+        t.setStyle(TableStyle([
+            ("FONTSIZE", (0, 0), (-1, -1), 9.5), ("TEXTCOLOR", (0, 0), (0, -1), muted),
+            ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
+            ("LINEBELOW", (0, 0), (-1, -1), 0.4, rl_colors.HexColor("#E4E4EC")),
+            ("TOPPADDING", (0, 0), (-1, -1), 3.5), ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5),
+        ]))
+        return t
+
+    story = []
+    try:
+        story.append(RLImage("assets/logo.png", width=26 * mm, height=8.7 * mm))
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass
+    story.append(Paragraph(str(row["component"]), title_style))
+    story.append(Paragraph(f"{row['property']} \u2014 {row.get('location', '')}", small))
+    story.append(Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", small))
+
+    story.append(Paragraph("Identity", h2))
+    story.append(kv_table([
+        ("Portfolio / Site", f"{row['portfolio']} / {row['site']}"),
+        ("Group / Type", f"{row['comp. group']} / {row['comp. type']}"),
+        ("Component ID", str(row["cmp_id"])),
+    ]))
+
+    story.append(Paragraph("Condition & dates", h2))
+    survey_str = str(int(row["cmp_survey_year"])) if row["cmp_survey_year"] else "Missing"
+    story.append(kv_table([
+        ("Condition", str(row["Condition"])),
+        ("Construction year", str(int(row["cmp_construction_year"]))),
+        ("Survey year", survey_str),
+        ("Data confidence", str(row["data_confidence"])),
+    ]))
+
+    story.append(Paragraph("Forecast & decision", h2))
+    story.append(kv_table([
+        ("System renewal year", str(int(row["next_renewal_year"]))),
+        ("Age-based cross-check", str(int(row["est_replacement_year_age_based"]))),
+        ("Best estimate year", str(int(row["best_estimate_year"]))),
+        ("Decision", str(row["decision"])),
+        ("Risk score", f"{row['risk_score']:.1f} / 100"),
+        ("Urgency score", f"{row['urgency_score']:.1f} / 100"),
+    ]))
+
+    story.append(Paragraph("Economics", h2))
+    story.append(kv_table([
+        ("Replacement cost", money(row["cost"])),
+        ("Equivalent annual cost", money(row["eac_replace"])),
+        ("Life used", f"{row['life_fraction_used']*100:.0f}%"),
+        ("Modelled tipping year", str(int(row["tipping_year"])) if pd.notna(row["tipping_year"]) else "n/a"),
+    ]))
+
+    if row.get("has_replace_override"):
+        story.append(Paragraph(
+            f"<b>Human override on file:</b> targets {int(row['replace_override_year'])}.", body,
+        ))
+    if row.get("comment"):
+        story.append(Paragraph(f"<b>Comment on file:</b> \u201c{row['comment']}\u201d", body))
+
+    story.append(Paragraph("Forecast profile, 2026\u20132045", h2))
+    story.append(RLImage(chart_buf, width=160 * mm, height=53 * mm))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph(
+        "This dossier is a model estimate from FM Asset Excellence, not a committed capital plan.", small,
+    ))
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                             leftMargin=18 * mm, rightMargin=18 * mm)
+    doc.build(story)
+    return buf.getvalue()
+
+
 def run_budget_scenario(
     df: pd.DataFrame,
     annual_budget: float,

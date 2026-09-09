@@ -1,7 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
-from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header, COLORS, CONFIDENCE_COLORS
+from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header, generate_data_quality_audit_pdf, COLORS, CONFIDENCE_COLORS
 
 st.set_page_config(page_title="Data Quality", layout="wide")
 inject_css()
@@ -85,3 +85,39 @@ st.dataframe(
 )
 if len(gaps) > display_n:
     st.caption(f"Showing top {display_n:,} of {len(gaps):,} by cost.")
+
+st.markdown("---")
+st.markdown("##### Export as an audit report")
+st.caption("Combines this page with Field Notes into a single 'here's what we don't trust yet' document, "
+           "aimed at whoever owns the source data.")
+if st.button("Generate data quality audit PDF", type="primary"):
+    kpis = {
+        "Tracked components": f"{n:,}",
+        "High confidence": f"{(df['data_confidence']=='High').mean()*100:.0f}%",
+        "Medium confidence": f"{(df['data_confidence']=='Medium').mean()*100:.0f}%",
+        "Low confidence": f"{(df['data_confidence']=='Low').mean()*100:.0f}%",
+        "$ at stake in Low/Medium": money(low_med["cost"].sum()),
+        "Never surveyed": f"{df['survey_missing'].sum():,}",
+        "C-model reset risk flagged": f"{df['condition_reset_risk'].sum():,}",
+    }
+    conf_by_port_export = ct.reindex(columns=["High", "Medium", "Low"]).fillna(0).sort_values("High", ascending=False)
+    conf_by_group_export = ct2.reindex(columns=["High", "Medium", "Low"]).fillna(0)
+    conf_by_group_export = conf_by_group_export.loc[
+        conf_by_group_export.sum(axis=1).sort_values(ascending=False).head(10).index
+    ]
+    gaps_export = gaps.head(20)
+    faults_export = df[df["has_fault_note"]].sort_values("urgency_score", ascending=False).head(15)[
+        ["component", "portfolio", "comment"]
+    ]
+    overrides_export = df[df["has_replace_override"] & df["replace_override_year"].notna()].head(15)[
+        ["component", "next_renewal_year", "replace_override_year"]
+    ]
+    portfolios_in_scope = sorted(df["portfolio"].unique())
+    scope_label = f"{len(portfolios_in_scope)} portfolio(s), {n:,} components"
+    pdf_bytes = generate_data_quality_audit_pdf(
+        scope_label, kpis, conf_by_port_export, conf_by_group_export, gaps_export, faults_export, overrides_export,
+    )
+    st.download_button(
+        "Download PDF", data=pdf_bytes, file_name="FM_Asset_Excellence_Data_Quality_Audit.pdf",
+        mime="application/pdf",
+    )

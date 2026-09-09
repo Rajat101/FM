@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, compute_tipping_economics, render_header, COLORS
+from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, compute_tipping_economics, render_header, generate_component_group_pdf, COLORS
 
 st.set_page_config(page_title="Economic Tipping Points", layout="wide")
 inject_css()
@@ -73,3 +73,19 @@ fig2.update_layout(height=460, margin=dict(t=10, l=0, r=0, b=0), xaxis_title="Ac
                     yaxis_title="Modelled tipping point (%)")
 st.caption("Points below the diagonal have already passed their economic tipping point under the current assumptions.")
 show_chart(fig2)
+
+st.markdown("---")
+st.markdown("##### Export as a business case")
+st.caption(f"A focused funding case for **{sel_group}** \u2014 units past tipping point, total cost exposure, "
+           f"the curve above, and the highest-priority units in this group.")
+if st.button("Generate component-group PDF", type="primary"):
+    params = {"discount_rate": discount_rate, "maint_base_pct": maint_base_pct, "maint_growth_k": maint_growth_k}
+    top_assets = sub.sort_values("urgency_score", ascending=False).head(10)
+    portfolios_in_scope = sorted(df["portfolio"].unique())
+    scope_label = f"{len(portfolios_in_scope)} portfolio(s), {len(sub):,} units in {sel_group}"
+    pdf_bytes = generate_component_group_pdf(scope_label, sel_group, sub, params, top_assets)
+    st.download_button(
+        "Download PDF", data=pdf_bytes,
+        file_name=f"FM_Asset_Excellence_{sel_group.replace(' ', '_')}_Business_Case.pdf",
+        mime="application/pdf",
+    )

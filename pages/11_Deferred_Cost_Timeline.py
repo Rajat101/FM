@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import plotly.graph_objects as go
-from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header, COLORS
+from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header, generate_work_order_pdf, COLORS
 
 st.set_page_config(page_title="Deferred-Cost Timeline", layout="wide")
 inject_css()
@@ -69,3 +69,22 @@ if len(by_port):
     show_chart(fig2)
 else:
     st.info("Nothing due in this selection for the current filter.")
+
+st.markdown("---")
+st.markdown("##### Export as a work order report")
+st.caption("Operational document: everything overdue or due in the next 12 months (2026), grouped by "
+           "portfolio and sorted by urgency \u2014 for whoever dispatches the work, not who approves the budget.")
+if st.button("Generate work order report PDF", type="primary"):
+    next12_df = d[d["already_overdue"] | (d["best_estimate_year"] == 2026)]
+    by_portfolio_export = next12_df.groupby("portfolio").agg(
+        components=("cmp_id", "count"), cost=("cost", "sum")
+    ).sort_values("cost", ascending=False)
+    portfolios_in_scope = sorted(df["portfolio"].unique())
+    scope_label = f"{len(portfolios_in_scope)} portfolio(s), {len(df):,} components"
+    pdf_bytes = generate_work_order_pdf(
+        scope_label, "Overdue + due in 2026 (next 12 months)", next12_df, by_portfolio_export,
+    )
+    st.download_button(
+        "Download PDF", data=pdf_bytes, file_name="FM_Asset_Excellence_Work_Order_Report.pdf",
+        mime="application/pdf",
+    )

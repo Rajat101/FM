@@ -1,6 +1,6 @@
 import streamlit as st
 import plotly.graph_objects as go
-from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header, COLORS, DECISION_COLORS, YEARS
+from common import inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header, generate_asset_dossier_pdf, COLORS, DECISION_COLORS, YEARS
 
 st.set_page_config(page_title="Asset Explorer", layout="wide")
 inject_css()
@@ -89,4 +89,16 @@ if nonzero <= 2:
     st.caption(
         f"This component is only scheduled for replacement {nonzero} time(s) in the 2026\u20132045 window "
         f"\u2014 the mostly-empty chart is expected for a single asset, not a display issue."
+    )
+
+st.markdown("---")
+st.markdown("##### Export this component")
+st.caption("A one-page dossier for this specific component \u2014 identity, condition, forecast, economics, "
+           "and comments. Useful for the 'why does this need $50K' question in a budget meeting.")
+if st.button("Generate single-asset dossier PDF", type="primary"):
+    pdf_bytes = generate_asset_dossier_pdf(row)
+    st.download_button(
+        "Download PDF", data=pdf_bytes,
+        file_name=f"FM_Asset_Excellence_Dossier_{int(row['cmp_id'])}.pdf",
+        mime="application/pdf",
     )
