@@ -574,6 +574,163 @@ def generate_pdf_report(scope_label: str, kpis: dict, insights: list, rec_summar
     ))
     doc.build(story)
     return buf.getvalue()
+
+
+def generate_scenario_pdf_report(scope_label: str, params_a: dict, params_b: dict,
+                                  results_a: pd.DataFrame, results_b: pd.DataFrame,
+                                  compare_on: bool) -> bytes:
+    """Scenario A vs B business case: the backlog/spend delta as a funding-request document."""
+    import io as _io
+    from datetime import datetime
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.units import mm
+    from reportlab.lib import colors as rl_colors
+    from reportlab.platypus import (SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle,
+                                     Image as RLImage, HRFlowable)
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+
+    navy = rl_colors.HexColor("#2B3797")
+    muted = rl_colors.HexColor("#5B5F73")
+    good = rl_colors.HexColor("#1F8A4C")
+    bad = rl_colors.HexColor("#C23A3A")
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle("TitleSC", parent=styles["Title"], textColor=navy, fontSize=19)
+    h2 = ParagraphStyle("H2SC", parent=styles["Heading2"], textColor=navy, fontSize=13, spaceBefore=14, spaceAfter=6)
+    body = ParagraphStyle("BodySC", parent=styles["Normal"], fontSize=9.8, leading=14.5)
+    small = ParagraphStyle("SmallSC", parent=styles["Normal"], fontSize=8.6, leading=12, textColor=muted)
+    callout_num = ParagraphStyle("CalloutNum", parent=styles["Normal"], fontSize=22, leading=26,
+                                  fontName="Helvetica-Bold")
+
+    # --- chart: backlog over time, both scenarios, rendered with matplotlib -> PNG ---
+    fig, ax = plt.subplots(figsize=(6.6, 3.0), dpi=160)
+    ax.plot(results_a["year"], results_a["backlog_value"] / 1_000_000, color="#5A69D6", linewidth=2.4, label="Scenario A")
+    ax.fill_between(results_a["year"], 0, results_a["backlog_value"] / 1_000_000, color="#5A69D6", alpha=0.15)
+    if compare_on and results_b is not None:
+        ax.plot(results_b["year"], results_b["backlog_value"] / 1_000_000, color="#ED1C24", linewidth=2.4, label="Scenario B")
+    ax.set_ylabel("Unfunded backlog ($M)")
+    ax.spines[["top", "right"]].set_visible(False)
+    ax.legend(frameon=False, loc="upper left", fontsize=9)
+    ax.grid(axis="y", alpha=0.25)
+    plt.tight_layout()
+    chart_buf = _io.BytesIO()
+    fig.savefig(chart_buf, format="png")
+    plt.close(fig)
+    chart_buf.seek(0)
+
+    story = []
+    try:
+        story.append(RLImage("assets/logo.png", width=28 * mm, height=9.4 * mm))
+        story.append(Spacer(1, 6))
+    except Exception:
+        pass
+    story.append(Paragraph("Scenario Business Case", title_style))
+    story.append(Paragraph(f"Scope: {scope_label}", small))
+    story.append(Paragraph(f"Generated {datetime.now().strftime('%d %b %Y, %H:%M')}", small))
+    story.append(Spacer(1, 12))
+
+    end_a = results_a.iloc[-1]
+    if compare_on and results_b is not None:
+        end_b = results_b.iloc[-1]
+        delta_backlog = end_b["backlog_value"] - end_a["backlog_value"]
+        delta_color = good if delta_backlog < 0 else bad
+        direction = "lower" if delta_backlog < 0 else "higher"
+        story.append(Paragraph("The headline number", h2))
+        story.append(Paragraph(
+            f'<font color="{delta_color.hexval()}">{money(abs(delta_backlog))} {direction}</font> backlog by 2045 '
+            f"under Scenario B (budget {money(params_b['budget'])}/yr) versus Scenario A "
+            f"(budget {money(params_a['budget'])}/yr).", callout_num,
+        ))
+        story.append(Spacer(1, 4))
+        story.append(Paragraph(
+            f"Scenario A ends 2045 with {end_a['assets_backlog']:,.0f} assets never funded "
+            f"({money(end_a['backlog_value'])} backlog). Scenario B ends with {end_b['assets_backlog']:,.0f} "
+            f"({money(end_b['backlog_value'])} backlog).", body,
+        ))
+    else:
+        story.append(Paragraph("The headline number", h2))
+        story.append(Paragraph(
+            f"{money(end_a['backlog_value'])} unfunded backlog by 2045", callout_num,
+        ))
+        story.append(Paragraph(
+            f"Under a {money(params_a['budget'])}/yr budget, {end_a['assets_backlog']:,.0f} assets remain "
+            f"unfunded by the end of the 20-year window.", body,
+        ))
+
+    story.append(Spacer(1, 10))
+    story.append(HRFlowable(width="100%", thickness=0.6, color=rl_colors.HexColor("#DADCE8")))
+    story.append(Spacer(1, 10))
+
+    story.append(Paragraph("Scenario parameters", h2))
+    param_rows = [["Parameter", "Scenario A", "Scenario B" if compare_on else ""]]
+    keys = [
+        ("Annual budget", "budget", money),
+        ("Budget growth / yr", "growth", lambda v: f"{v*100:.0f}%"),
+        ("Deferral cost escalation / yr", "escalation", lambda v: f"{v*100:.0f}%"),
+        ("Priority: risk vs. cost-efficiency", "risk_weight", lambda v: f"{v:.2f}"),
+    ]
+    for label, key, fmt in keys:
+        row = [label, fmt(params_a[key])]
+        if compare_on:
+            row.append(fmt(params_b[key]))
+        param_rows.append(row)
+    param_table = Table(param_rows, colWidths=[65 * mm, 50 * mm, 50 * mm] if compare_on else [90 * mm, 75 * mm])
+    param_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F5F6FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(param_table)
+
+    story.append(Spacer(1, 14))
+    story.append(Paragraph("Unfunded backlog over time", h2))
+    story.append(RLImage(chart_buf, width=160 * mm, height=72.7 * mm))
+
+    story.append(Spacer(1, 10))
+    story.append(Paragraph("20-year outcome summary", h2))
+    summary_rows = [["Metric", "Scenario A", "Scenario B" if compare_on else ""]]
+    metrics = [
+        ("Total spend, 2026\u20132045", results_a["spend"].sum(), results_b["spend"].sum() if compare_on else None),
+        ("Backlog value by 2045", end_a["backlog_value"], end_b["backlog_value"] if compare_on else None),
+        ("Assets never funded", end_a["assets_backlog"], end_b["assets_backlog"] if compare_on else None),
+        ("Peak annual spend", results_a["spend"].max(), results_b["spend"].max() if compare_on else None),
+    ]
+    for label, a_val, b_val in metrics:
+        row = [label, money(a_val) if "spend" in label.lower() or "backlog" in label.lower() else f"{a_val:,.0f}"]
+        if compare_on:
+            row.append(money(b_val) if "spend" in label.lower() or "backlog" in label.lower() else f"{b_val:,.0f}")
+        summary_rows.append(row)
+    sm_table = Table(summary_rows, colWidths=[65 * mm, 50 * mm, 50 * mm] if compare_on else [90 * mm, 75 * mm])
+    sm_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), navy),
+        ("TEXTCOLOR", (0, 0), (-1, 0), rl_colors.white),
+        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9.5),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [rl_colors.white, rl_colors.HexColor("#F5F6FA")]),
+        ("GRID", (0, 0), (-1, -1), 0.3, rl_colors.HexColor("#E4E4EC")),
+        ("TOPPADDING", (0, 0), (-1, -1), 5), ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(sm_table)
+
+    story.append(Spacer(1, 14))
+    story.append(Paragraph(
+        "This report is a model estimate from FM Asset Excellence, not a committed capital plan. Figures "
+        "reflect the assumptions and filters in place when this document was generated.", small,
+    ))
+
+    buf = _io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=A4, topMargin=18 * mm, bottomMargin=16 * mm,
+                             leftMargin=18 * mm, rightMargin=18 * mm)
+    doc.build(story)
+    return buf.getvalue()
+
+
 def run_budget_scenario(
     df: pd.DataFrame,
     annual_budget: float,
