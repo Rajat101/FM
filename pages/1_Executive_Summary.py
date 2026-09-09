@@ -50,7 +50,7 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown(
     f"""<div style="background: linear-gradient(135deg, {COLORS['surface_2']}, {COLORS['surface']});
                 border: 1px solid {COLORS['border']}; border-radius: 16px; padding: 22px 26px 10px;">
-        <h4 style="margin:0; color:{COLORS['text']};">If you remember one chart, remember this one</h4>
+        <h4 style="margin:0; color:{COLORS['text']};">Backlog</h4>
         <p style="font-size:13px; color:{COLORS['text_muted']}; margin:4px 0 12px;">
             Unfunded backlog value under a status-quo budget (current 20-yr average spend, held flat, no
             escalation offset). This is what happens if nothing changes.
