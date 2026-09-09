@@ -133,7 +133,7 @@ def inject_css():
         .flow-step.tip {{ border-color: {COLORS['warn']}; }}
         .flow-step.tip .dot {{ background: {COLORS['warn']}; }}
         .flow-arrow {{ text-align: center; font-size: 12px; color: {COLORS['text_muted']}; padding: 2px 0; }}
-               hr {{ border-color: {COLORS['border']}; }}
+        hr {{ border-color: {COLORS['border']}; }}
         header[data-testid="stHeader"] {{ background-color: {COLORS['bg']} !important; background-image: none !important; }}
         [data-testid="stToolbar"] {{ background-color: {COLORS['bg']} !important; }}
         [data-testid="stDecoration"] {{ background-image: none !important; background-color: {COLORS['bg']} !important; }}
