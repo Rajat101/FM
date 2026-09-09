@@ -13,28 +13,43 @@ data is sensitive.
 
 ## Pages
 
-1. **Home** — upload the workbook here; insight banner (auto-surfaced
+0. **How to Use** &mdash; a recommended reading order and a directory of every page, for anyone opening the app for the first time.
+1. **Executive Summary** &mdash; the one page to present from. No filters, just headline KPIs, top insights, one chart, and top priority actions.
+2. **Home** &mdash; upload the workbook here; insight banner (auto-surfaced
    findings), portfolio KPIs, a live scenario/forecast hero you can tune
    right on the page, and the three "how it works" visuals (lifecycle flow,
    condition decay curve, cost crossover).
-2. **Asset Explorer** — filterable/searchable table of every component with
+3. **Asset Explorer** &mdash; filterable/searchable table of every component with
    a full drill-down per asset (condition, forecast profile, comments).
-3. **Lifecycle Forecast** — CapEx vs OpEx by year, by portfolio, by
+4. **Lifecycle Forecast** &mdash; CapEx vs OpEx by year, by portfolio, by
    component group, and deferred-renewal exposure.
-4. **Risk & Condition** — risk scoring methodology, condition distribution,
+5. **Risk & Condition** &mdash; risk scoring methodology, condition distribution,
    and the life-used-vs-risk decision matrix.
-5. **Economic Tipping Points** — adjustable maintain-vs-replace economics
+6. **Economic Tipping Points** &mdash; adjustable maintain-vs-replace economics
    (discount rate, maintenance escalation) with live-recomputed tipping
    points per component group.
-6. **Scenario Modeling** — set an annual budget, growth rate, deferral
+7. **Scenario Modeling** &mdash; set an annual budget, growth rate, deferral
    escalation, and prioritisation weighting; compare two scenarios
    side-by-side on backlog value, risk exposure, and spend.
-7. **Recommendations** (new in v1) — set your own life-used and risk
+8. **Recommendations** &mdash; set your own life-used and risk
    thresholds (plus an optional budget cap) and every asset is reclassified
    live into Maintain / Plan Renewal / Replace Now / Overdue / Defer,
    each shown with count, total cost, and a browsable table. Includes a
    PDF export: KPIs, insights, and per-category counts/costs plus a
    top-10-by-urgency sample -- never a full data dump.
+9. **Data Quality** &mdash; where the underlying data is strong or shaky (by
+   portfolio and component group), and the dollar value riding on the gaps.
+10. **Field Notes** &mdash; what's actually written in the comments: active
+    fault flags, human overrides vs. the system's own forecast, and
+    maintenance-record references.
+11. **Portfolio Benchmarking** &mdash; compare portfolios head-to-head on cost
+    per component, average condition, average risk, and overdue share.
+12. **Deferred-Cost Timeline** &mdash; a year-by-year schedule of what's due
+    and when, browsable by year, instead of an aggregate dollar chart.
+
+> Streamlit's sidebar collapses navigation after 10 pages behind a "View N
+> more" button. With 13 pages, viewers will need to click it once to see
+> Field Notes, Portfolio Benchmarking, and Deferred-Cost Timeline.
 
 ## v1 changelog
 
@@ -48,6 +63,24 @@ data is sensitive.
 - Added the Recommendations page and PDF export (see above).
 - Fixed a pandas `iterrows()` dtype bug that showed asset counts as
   "3,422.0" instead of "3,422" in KPI cards and the PDF table.
+- Fixed Streamlit's native header rendering as a solid black bar against
+  the gradient background -- set to `transparent` instead of a flat color
+  so the underlying gradient shows through seamlessly.
+
+## v2 changelog
+
+- Added 5 new pages: Executive Summary, Data Quality, Field Notes,
+  Portfolio Benchmarking, Deferred-Cost Timeline.
+- Added the How to Use page (in-app onboarding/reading-order guide).
+- Fixed a real bug in Field Notes: `has_replace_override` could be True
+  even when no 4-digit year was parseable from the comment (e.g. "replace
+  by next year"), crashing the page on `.astype(int)`. Now filtered and
+  the excluded count is surfaced explicitly instead of hidden.
+- Fixed a systemic bug across every page using `st.column_config.
+  ProgressColumn` for risk/urgency scores: with no explicit `format`,
+  Streamlit auto-inferred percent formatting and multiplied the 0-100
+  score by 100 again (e.g. a risk score of 6.4 displayed as "640%").
+  Fixed by adding `format="%.0f"` to all 7 instances across 5 pages.
 2. **Asset Explorer** — filterable/searchable table of every component with
    a full drill-down per asset (condition, forecast profile, comments).
 3. **Lifecycle Forecast** — CapEx vs OpEx by year, by portfolio, by

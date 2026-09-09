@@ -150,7 +150,6 @@ def inject_css():
     )
 
 
-
 @st.cache_resource
 def _logo_b64():
     import base64
