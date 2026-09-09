@@ -1,15 +1,20 @@
 # Pannawonica Asset Lifecycle & Decision Model
 
-A multi-page Streamlit app built from `Lifecycle_PAN.xlsx` (129,487 tracked
-components across 7 Pannawonica portfolios). It cleans the raw lifecycle
-export, computes risk scores, economic tipping points, and a maintain /
-renew / replace / defer decision for every component, then lets you run
-budget what-if scenarios across a 20-year horizon.
+A multi-page Streamlit app that cleans a lifecycle asset export, computes
+risk scores, economic tipping points, and a maintain / renew / replace /
+defer decision for every component, then lets you run budget what-if
+scenarios across a 20-year horizon.
+
+**No data is committed to this repo.** The app takes the workbook via an
+in-browser file upload and processes it entirely in memory, in your own
+session -- nothing is written to disk or shared with anyone else. This is
+what lets the repo (and app) be public even though the underlying asset
+data is sensitive.
 
 ## Pages
 
-1. **Home** — portfolio-wide KPIs, CapEx forecast, decision mix, data
-   confidence overview.
+1. **Home** — upload the workbook here; portfolio-wide KPIs, CapEx
+   forecast, decision mix, data confidence overview.
 2. **Asset Explorer** — filterable/searchable table of every component with
    a full drill-down per asset (condition, forecast profile, comments).
 3. **Lifecycle Forecast** — CapEx vs OpEx by year, by portfolio, by
@@ -23,37 +28,34 @@ budget what-if scenarios across a 20-year horizon.
    escalation, and prioritisation weighting; compare two scenarios
    side-by-side on backlog value, risk exposure, and spend.
 
-## Setup
+## Run locally
 
 ```bash
 pip install -r requirements.txt
-```
-
-The workbook itself is not bundled (it's large) — point `data_prep.py` at
-your copy of `Lifecycle_PAN.xlsx` if the path differs, then run:
-
-```bash
-python data_prep.py
-```
-
-This writes `data/processed.parquet`, which the app reads on every launch.
-Re-run it any time the source workbook is updated.
-
-## Run
-
-```bash
 streamlit run Home.py
 ```
 
-Opens at `http://localhost:8501`. Use the sidebar to switch pages and
-filter by portfolio / component group.
+Opens at `http://localhost:8501`. Upload your copy of `Lifecycle_PAN.xlsx`
+in the sidebar when prompted -- the app expects the same column layout as
+the original export (portfolio, site, cmp_id, base_life, Condition, cost,
+the 2026-2045 annual columns, etc.).
 
-## Deploying (optional)
+## Deploying on Streamlit Community Cloud
 
-Push this folder to a GitHub repo and deploy free on
-[Streamlit Community Cloud](https://streamlit.io/cloud) — point it at
-`Home.py` as the entry point, and make sure `data/processed.parquet` is
-committed (or that `data_prep.py` runs as a build step).
+1. Push this folder's contents to a GitHub repo (public or private).
+2. Go to [share.streamlit.io](https://share.streamlit.io), sign in with
+   GitHub, click **New app**.
+3. Pick the repo/branch, set **Main file path** to `Home.py`, click Deploy.
+4. Open the app and upload the workbook each session -- it's never stored
+   on the server between sessions, so nothing sensitive lives in the repo
+   or on Streamlit's infrastructure after you close the tab.
+
+### Optional: faster local iteration
+
+`data_prep.py` can pre-process a local copy of the workbook into
+`data/processed.parquet` for quick offline testing (`python data_prep.py
+/path/to/Lifecycle__PAN.xlsx`), but this is a dev convenience only --
+it's not read by the deployed app and doesn't need to be committed.
 
 ## Methodology notes & assumptions
 
@@ -70,6 +72,3 @@ committed (or that `data_prep.py` runs as a build step).
 - **Scenario engine**: each year, due/overdue assets compete for that
   year's budget by a blended urgency/cost-efficiency score. Unfunded assets
   carry forward with escalated cost and urgency (deferral compounds).
-
-See `Pannawonica_Lifecycle_Model_Feature_Plan.md` (shared earlier in this
-conversation) for the full feature inventory this app was built from.

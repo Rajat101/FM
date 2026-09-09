@@ -1,13 +1,17 @@
 """Shared helpers used by every page of the app."""
+import io
 import numpy as np
 import pandas as pd
 import streamlit as st
 import plotly.graph_objects as go
 import plotly.io as pio
 
-DATA_PATH = "data/processed.parquet"
 YEARS_INT = list(range(2026, 2046))
-YEARS = [str(y) for y in YEARS_INT]  # parquet stores column names as strings
+YEARS = [str(y) for y in YEARS_INT]
+
+CURRENT_YEAR = 2026
+CONDITION_NUM = {"C1": 1, "C2": 2, "C3": 3, "C4": 4, "C5": 5}
+CONDITION_LIFE_USED = {"C1": 0.10, "C2": 0.40, "C3": 0.65, "C4": 0.85, "C5": 0.97}
 
 # ---------------------------------------------------------------- design tokens
 COLORS = {
@@ -127,10 +131,121 @@ def show_chart(fig, **kwargs):
     st.plotly_chart(fig, width="stretch", theme=None, **kwargs)
 
 
-@st.cache_data
-def load_data() -> pd.DataFrame:
-    df = pd.read_parquet(DATA_PATH)
+def _clean_workbook(df: pd.DataFrame) -> pd.DataFrame:
+    """Full cleaning + feature pipeline, run in-memory on whatever workbook was uploaded."""
+    df.columns = [str(c).strip() for c in df.columns]
+    df["comment"] = df["comment"].apply(lambda v: v if isinstance(v, str) else ("" if pd.isna(v) else str(v)))
+
+    # --- quality flags -------------------------------------------------
+    df["survey_missing"] = df["cmp_survey_year"] == 0
+    nunique_years = df.groupby("property code")["cmp_construction_year"].transform("nunique")
+    n_components = df.groupby("property code")["cmp_construction_year"].transform("count")
+    df["construction_year_uniform_property"] = (nunique_years == 1) & (n_components >= 5)
+    df["already_overdue"] = df["next_renewal_year"] < CURRENT_YEAR
+    df["renewal_beyond_window"] = df["next_renewal_year"] > 2045
+    df["condition_reset_risk"] = (
+        (df["calc_method"] == "C")
+        & (df["cmp_survey_year"] >= 2023)
+        & df["Condition"].isin(["C1", "C2"])
+        & (df["base_life"] <= 20)
+    )
+    conf = pd.Series(100.0, index=df.index)
+    conf -= df["survey_missing"] * 30
+    conf -= df["construction_year_uniform_property"] * 15
+    conf -= df["condition_reset_risk"] * 25
+    conf = conf.clip(0, 100)
+    df["data_confidence_score"] = conf
+    df["data_confidence"] = pd.cut(conf, bins=[-1, 59, 89, 101], labels=["Low", "Medium", "High"])
+
+    # --- mine free-text comments ---------------------------------------
+    c = df["comment"].fillna("")
+    df["has_replace_override"] = c.str.contains(r"replace by", case=False, regex=True)
+    df["replace_override_year"] = c.str.extract(r"[Rr]eplace by\s*(\d{4})", expand=False).astype("float")
+    df["has_fault_note"] = c.str.contains(r"leak|crack|fault|damage|broken|not working", case=False, regex=True)
+    df["has_maintenance_record"] = c.str.contains(r"order:|replaced", case=False, regex=True)
+
+    # --- lifecycle estimates ---------------------------------------------
+    df["condition_numeric"] = df["Condition"].map(CONDITION_NUM)
+    life_used_frac = df["Condition"].map(CONDITION_LIFE_USED)
+    age = CURRENT_YEAR - df["cmp_construction_year"]
+    df["est_replacement_year_age_based"] = CURRENT_YEAR + (df["base_life"] - age)
+    df["forecast_year_gap"] = (df["next_renewal_year"] - df["est_replacement_year_age_based"]).round(0)
+    df["best_estimate_year"] = np.where(
+        df["has_replace_override"] & df["replace_override_year"].notna(),
+        df["replace_override_year"],
+        df["next_renewal_year"],
+    )
+    df["life_fraction_used"] = np.clip(life_used_frac, 0, 1.5)
+
+    # --- risk + economics -------------------------------------------------
+    raw_risk = df["condition_numeric"] * df["consequence"] * df["safety"]
+    df["risk_score"] = (raw_risk / raw_risk.max() * 100).round(1)
+    urgency = df["risk_score"].copy()
+    urgency += df["already_overdue"] * 15
+    urgency += df["condition_reset_risk"] * 10
+    df["urgency_score"] = np.clip(urgency, 0, 100).round(1)
+
+    discount_rate, maint_base_pct, maint_growth_k = 0.07, 0.02, 3.0
+    n = df["base_life"].clip(lower=1)
+    r = discount_rate
+    crf = (r * (1 + r) ** n) / ((1 + r) ** n - 1)
+    df["eac_replace"] = (df["cost"] * crf).round(2)
+    x = df["life_fraction_used"].clip(0, 1.5)
+    df["annual_maintenance_cost_now"] = (maint_base_pct * df["cost"] * np.exp(maint_growth_k * x)).round(2)
+    with np.errstate(divide="ignore", invalid="ignore"):
+        x_star = np.log(df["eac_replace"] / (maint_base_pct * df["cost"]).replace(0, np.nan)) / maint_growth_k
+    x_star = x_star.clip(lower=0, upper=1.5)
+    df["tipping_life_fraction"] = x_star
+    df["tipping_year"] = (df["cmp_construction_year"] + x_star * df["base_life"]).round(0)
+
+    def decide(row):
+        if row["already_overdue"]:
+            return "Replace Now (Overdue)"
+        if row["life_fraction_used"] >= 0.85:
+            return "Replace Now" if row["risk_score"] >= 40 else "Defer Candidate"
+        if row["life_fraction_used"] >= 0.55:
+            return "Plan Renewal"
+        return "Maintain"
+
+    df["decision"] = df.apply(decide, axis=1)
+
+    # keep year columns as strings throughout the app, regardless of source
+    df = df.rename(columns={y: str(y) for y in YEARS_INT if y in df.columns})
     return df
+
+
+@st.cache_data(show_spinner="Cleaning workbook and computing lifecycle model...")
+def process_workbook(file_bytes: bytes) -> pd.DataFrame:
+    raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=0)
+    return _clean_workbook(raw)
+
+
+def load_data() -> pd.DataFrame:
+    """Returns the processed dataframe, prompting for an upload if one isn't
+    already in this session. Cached in session_state so switching pages
+    doesn't reprocess or re-prompt."""
+    if "processed_df" in st.session_state:
+        st.sidebar.markdown("### Data source")
+        st.sidebar.caption(f"Loaded: **{st.session_state.get('uploaded_filename', 'workbook')}**")
+        if st.sidebar.button("Change file", key="change_file_btn"):
+            del st.session_state["processed_df"]
+            st.rerun()
+        return st.session_state["processed_df"]
+
+    st.sidebar.markdown("### Data source")
+    uploaded = st.sidebar.file_uploader("Upload Lifecycle_PAN.xlsx", type=["xlsx"])
+    if uploaded is None:
+        st.title("Pannawonica Asset Lifecycle & Decision Model")
+        st.info(
+            "Upload the **Lifecycle_PAN.xlsx** workbook in the sidebar to load the model. "
+            "Nothing is stored beyond this session -- the file is processed in memory only."
+        )
+        st.stop()
+
+    df = process_workbook(uploaded.getvalue())
+    st.session_state["processed_df"] = df
+    st.session_state["uploaded_filename"] = uploaded.name
+    st.rerun()
 
 
 def money(x, decimals=0):
