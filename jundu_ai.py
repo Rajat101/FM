@@ -176,6 +176,9 @@ def _tool_run_scenario(df, annual_budget, budget_growth_pct, deferral_escalation
         "horizon_end_year": horizon_end_year,
         "first_5_years": results.head(5)[["year", "budget", "spend", "backlog_value"]].round(2).to_dict("records"),
         "last_5_years": results.tail(5)[["year", "budget", "spend", "backlog_value"]].round(2).to_dict("records"),
+        # Full series for charting only -- stripped before being sent to the model (see run_function_calling_chat).
+        "_chart_type": "scenario_backlog",
+        "_chart_data": results[["year", "backlog_value", "spend", "budget"]].round(2).to_dict("records"),
     }
 
 
@@ -196,12 +199,20 @@ def _tool_compute_tco_summary(df, discount_rate_pct, cost_escalation_pct):
 def _tool_get_recommendation_breakdown(df):
     rec_summary = df.groupby("recommendation").agg(count=("Package Cost", "count"), cost=("Package Cost", "sum"))
     rec_summary = rec_summary.reindex(jc.RECOMMENDATION_ORDER).dropna(how="all")
-    return {idx: {"count": int(r["count"]), "cost": round(float(r["cost"]), 2)} for idx, r in rec_summary.iterrows()}
+    result = {idx: {"count": int(r["count"]), "cost": round(float(r["cost"]), 2)} for idx, r in rec_summary.iterrows()}
+    result["_chart_type"] = "recommendation_bar"
+    result["_chart_data"] = [{"category": idx, "count": int(r["count"]), "cost": round(float(r["cost"]), 2)}
+                              for idx, r in rec_summary.iterrows()]
+    return result
 
 
 def _tool_get_confidence_breakdown(df):
     conf_summary = df.groupby("confidence").agg(count=("Package Cost", "count"), cost=("Package Cost", "sum"))
-    return {idx: {"count": int(r["count"]), "cost": round(float(r["cost"]), 2)} for idx, r in conf_summary.iterrows()}
+    result = {idx: {"count": int(r["count"]), "cost": round(float(r["cost"]), 2)} for idx, r in conf_summary.iterrows()}
+    result["_chart_type"] = "confidence_bar"
+    result["_chart_data"] = [{"category": idx, "count": int(r["count"]), "cost": round(float(r["cost"]), 2)}
+                              for idx, r in conf_summary.iterrows()]
+    return result
 
 
 def _tool_get_vision_tracker(df):
@@ -289,7 +300,12 @@ def run_function_calling_chat(client, model: str, df: pd.DataFrame, history: lis
                     result = fn(df, **args)
                 except Exception as e:
                     result = {"error": str(e)}
-            tool_calls_made.append({"name": fn_name, "args": args, "result": result})
+            chart_type = result.pop("_chart_type", None) if isinstance(result, dict) else None
+            chart_data = result.pop("_chart_data", None) if isinstance(result, dict) else None
+            tool_calls_made.append({
+                "name": fn_name, "args": args, "result": result,
+                "chart_type": chart_type, "chart_data": chart_data,
+            })
             messages.append({
                 "role": "tool", "tool_call_id": tc.id,
                 "content": json.dumps(result, default=str),
@@ -302,3 +318,35 @@ def run_function_calling_chat(client, model: str, df: pd.DataFrame, history: lis
         {"role": "assistant", "content": final_text},
     ]
     return final_text, new_history, tool_calls_made
+
+
+def build_chart_from_tool_call(chart_type: str, chart_data: list):
+    """Builds the actual Plotly figure for a tool call's real result -- never invented by the model,
+    always the same chart the rest of the app already uses for this data shape."""
+    import plotly.graph_objects as go
+    from common import COLORS
+
+    if not chart_type or not chart_data:
+        return None
+
+    if chart_type == "scenario_backlog":
+        years = [r["year"] for r in chart_data]
+        backlog = [r["backlog_value"] for r in chart_data]
+        fig = go.Figure(go.Scatter(
+            x=years, y=backlog, line=dict(color=COLORS["critical"], width=3),
+            fill="tozeroy", name="Backlog",
+        ))
+        fig.update_layout(height=280, margin=dict(t=30, l=0, r=0, b=0), yaxis_title="Unfunded backlog $",
+                           title="Unfunded backlog over time")
+        return fig
+
+    if chart_type in ("recommendation_bar", "confidence_bar"):
+        cats = [r["category"] for r in chart_data]
+        counts = [r["count"] for r in chart_data]
+        fig = go.Figure(go.Bar(y=cats, x=counts, orientation="h", marker_color=COLORS["accent"]))
+        title = "Assets by recommendation" if chart_type == "recommendation_bar" else "Assets by data confidence"
+        fig.update_layout(height=280, margin=dict(t=30, l=0, r=0, b=0), xaxis_title="Assets", title=title)
+        return fig
+
+    return None
+
