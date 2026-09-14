@@ -35,6 +35,8 @@ if uploaded is None:
     st.info("Upload the workbook above to load the model. Nothing is stored beyond this session.")
     st.stop()
 
+st.session_state["jundu_uploaded_bytes"] = uploaded.getvalue()
+
 
 @st.cache_data(show_spinner="Processing Jundunmunnah workbook\u2026")
 def process_jundu_file(file_bytes):
