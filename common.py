@@ -1,5 +1,6 @@
 """Shared helpers used by every page of the app."""
 import io
+import re
 import numpy as np
 import pandas as pd
 import streamlit as st
@@ -347,10 +348,152 @@ def _clean_workbook(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+# ------------------------------------------------------------- file loading
+# The source system exports the same data in more than one layout. Everything is
+# mapped onto the original Lifecycle_PAN layout before _clean_workbook runs.
+COLUMN_ALIASES = {
+    "property_code": "property code",
+    "comp_group": "comp. group",
+    "comp_type": "comp. type",
+    "code": "cmp_code",
+    "construction_year": "cmp_construction_year",
+    "ownership": "cmp_ownership",
+    "management": "cmp_management",
+    "mnt": "maintenance",
+    "opex_capex": "exp_type",
+    "base_life_conf_id": "bl_conf",
+    "condition_conf_id": "con_conf",
+    "quantity_conf_id": "qty_conf",
+    "cost_conf_id": "cst_conf",
+    "survey_year": "cmp_survey_year",
+    "condition": "Condition",
+}
+NUMERIC_COLS = ["cmp_construction_year", "cmp_survey_year", "next_renewal_year", "deferred",
+                "base_life", "cost", "qty", "rate", "consequence", "safety", "appearance"]
+
+
+def site_from_filename(filename: str) -> str:
+    """'Lifecycle  PAN.xlsx' -> 'PAN', 'lifecycle_tom_price.csv' -> 'Tom Price'."""
+    stem = re.sub(r"\.(xlsx|xlsm|xls|csv)$", "", filename or "", flags=re.I)
+    stem = re.sub(r"\(\d+\)$", "", stem)                      # 'file (1).csv' download copies
+    stem = re.sub(r"(?i)\blifecycle\b|lifecycle", " ", stem)
+    stem = re.sub(r"[_\-]+", " ", stem)
+    stem = re.sub(r"\s+", " ", stem).strip()
+    if not stem:
+        return filename or "Uploaded file"
+    return stem if stem.isupper() else stem.title()
+
+
+def _read_any(file_bytes: bytes, filename: str) -> pd.DataFrame:
+    if filename.lower().endswith(".csv"):
+        try:
+            return pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8-sig", low_memory=False)
+        except UnicodeDecodeError:
+            return pd.read_csv(io.BytesIO(file_bytes), encoding="latin-1", low_memory=False)
+    return pd.read_excel(io.BytesIO(file_bytes), sheet_name=0)
+
+
+def _harmonise(raw: pd.DataFrame, filename: str = "") -> pd.DataFrame:
+    """Bring any supported export layout (xlsx or csv) to the original column set."""
+    df = raw.copy()
+    df.columns = [str(c).strip().lstrip("﻿") for c in df.columns]
+
+    # year headers: '2026' (csv) / 2026.0 -> int 2026
+    def _as_year(c):
+        s = c[:-2] if c.endswith(".0") else c
+        return int(s) if s.isdigit() and len(s) == 4 else c
+    df.columns = [_as_year(c) for c in df.columns]
+
+    # alternative column names -> original names (only if the original is absent)
+    lower = {c.lower(): c for c in df.columns if isinstance(c, str)}
+    renames = {}
+    for alt, target in COLUMN_ALIASES.items():
+        if alt in lower and target not in df.columns:
+            renames[lower[alt]] = target
+    df = df.rename(columns=renames)
+
+    for col in NUMERIC_COLS:
+        if col in df.columns and df[col].dtype == object:
+            df[col] = pd.to_numeric(df[col].astype(str).str.replace(r"[$,\s]", "", regex=True), errors="coerce")
+
+    year_cols = [c for c in df.columns if isinstance(c, int)]
+    for y in year_cols:
+        if df[y].dtype == object:
+            df[y] = pd.to_numeric(df[y].astype(str).str.replace(r"[$,\s]", "", regex=True), errors="coerce")
+    df[year_cols] = df[year_cols].fillna(0)
+    past_years = [y for y in year_cols if y < CURRENT_YEAR]
+
+    # Condition: newer exports split it into c1..c5 -- take the dominant band
+    if "Condition" not in df.columns:
+        bands = [c for c in df.columns if isinstance(c, str) and re.fullmatch(r"[cC][1-5]", c)]
+        if bands:
+            vals = df[bands].apply(pd.to_numeric, errors="coerce").fillna(0)
+            vals.columns = [f"C{b[-1]}" for b in bands]
+            df["Condition"] = np.where(vals.sum(axis=1) > 0, vals.idxmax(axis=1), "C3")
+            df["condition_derived"] = True
+        else:
+            df["Condition"] = "C3"
+            df["condition_derived"] = True
+    df["Condition"] = df["Condition"].astype(str).str.strip().str.upper()
+    df.loc[df["Condition"].str.fullmatch(r"[1-5]"), "Condition"] = "C" + df["Condition"]
+    df.loc[~df["Condition"].isin(CONDITION_NUM.keys()), "Condition"] = "C3"
+
+    # fields some exports leave out
+    if "deferred" not in df.columns:
+        df["deferred"] = df[past_years].sum(axis=1) if past_years else 0.0
+    if "cmp_survey_year" not in df.columns:
+        df["cmp_survey_year"] = 0
+    if "next_renewal_year" not in df.columns:
+        has_cost = df[year_cols].gt(0)
+        df["next_renewal_year"] = np.where(has_cost.any(axis=1), has_cost.idxmax(axis=1), 2099)
+    if "comment" not in df.columns:
+        df["comment"] = ""
+    for col, default in {"consequence": 1, "safety": 1, "calc_method": "", "portfolio": "Unassigned",
+                         "site": "", "property code": "", "comp. group": "Other", "comp. type": "",
+                         "cost": 0.0, "base_life": 20}.items():
+        if col not in df.columns:
+            df[col] = default
+    df["cmp_survey_year"] = df["cmp_survey_year"].fillna(0)
+    df["next_renewal_year"] = df["next_renewal_year"].fillna(2099)
+    df["cmp_construction_year"] = df["cmp_construction_year"].fillna(CURRENT_YEAR)
+    df["base_life"] = df["base_life"].fillna(20).clip(lower=1)
+    for col in ["consequence", "safety"]:
+        df[col] = df[col].fillna(1)
+    df["portfolio"] = df["portfolio"].fillna("Unassigned").astype(str)
+    df["comp. group"] = df["comp. group"].fillna("Other").astype(str)
+
+    # forecast window is always 2026-2045; history years drop out after 'deferred' is built
+    for y in YEARS_INT:
+        if y not in df.columns:
+            df[y] = 0.0
+    df = df.drop(columns=[y for y in year_cols if y not in YEARS_INT])
+
+    df["source_file"] = filename or "workbook"
+    df["source_site"] = site_from_filename(filename) if filename else "Workbook"
+    return df
+
+
 @st.cache_data(show_spinner="Cleaning workbook and computing lifecycle model...")
-def process_workbook(file_bytes: bytes) -> pd.DataFrame:
-    raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name=0)
-    return _clean_workbook(raw)
+def process_workbook(file_bytes: bytes, filename: str = "") -> pd.DataFrame:
+    """Single file -> processed dataframe (kept for data_prep.py and older callers)."""
+    return _clean_workbook(_harmonise(_read_any(file_bytes, filename), filename))
+
+
+@st.cache_data(show_spinner="Combining files and computing lifecycle model...")
+def process_files(files: tuple) -> pd.DataFrame:
+    """files = ((filename, bytes), ...). Each file is harmonised, then all are stacked and
+    cleaned together, so risk scores are normalised across every site at once."""
+    frames = [_harmonise(_read_any(b, name), name) for name, b in files]
+    df = pd.concat(frames, ignore_index=True)
+
+    # the same component uploaded in two files -> keep it from the later file only
+    key = [c for c in ["cmp_id", "mnt_id"] if c in df.columns]
+    if key and len(files) > 1:
+        file_order = {name: i for i, (name, _) in enumerate(files)}
+        idx = df["source_file"].map(file_order)
+        last = idx.groupby([df[k] for k in key], dropna=False).transform("max")
+        df = df[idx == last].reset_index(drop=True)
+    return _clean_workbook(df)
 
 
 def load_data() -> pd.DataFrame:
@@ -359,26 +502,46 @@ def load_data() -> pd.DataFrame:
     doesn't reprocess or re-prompt."""
     if "processed_df" in st.session_state:
         st.sidebar.markdown("### Data source")
-        st.sidebar.caption(f"Loaded: **{st.session_state.get('uploaded_filename', 'workbook')}**")
-        if st.sidebar.button("Change file", key="change_file_btn"):
-            del st.session_state["processed_df"]
+        names = st.session_state.get("uploaded_filenames", ["workbook"])
+        st.sidebar.caption("Loaded: " + ", ".join(f"**{n}**" for n in names))
+        if st.sidebar.button("Change files", key="change_file_btn"):
+            for k in ["processed_df", "uploaded_filenames", "uploaded_filename"]:
+                st.session_state.pop(k, None)
             st.rerun()
         return st.session_state["processed_df"]
 
     st.sidebar.markdown("### Data source")
-    uploaded = st.sidebar.file_uploader("Upload Lifecycle file excel or csv", type=["xlsx","csv"])
-    if uploaded is None:
+    uploaded = st.sidebar.file_uploader(
+        "Upload lifecycle files (.xlsx or .csv)", type=["xlsx", "csv"], accept_multiple_files=True,
+        help="Upload one file per site. The file name becomes the site name, "
+             "e.g. 'Lifecycle PAN.xlsx' -> PAN.",
+    )
+    if not uploaded:
         render_header("Upload your workbook to begin")
         st.info(
-            "Upload the **Lifecycle_PAN.xlsx** workbook in the sidebar to load the model. "
-            "Nothing is stored beyond this session -- the file is processed in memory only."
+            "Upload one or more lifecycle files (.xlsx or .csv) in the sidebar to load the model. "
+            "Each file name becomes the site name, so you can compare sites side by side. "
+            "Nothing is stored beyond this session -- files are processed in memory only."
         )
         st.stop()
 
-    df = process_workbook(uploaded.getvalue())
+    files = tuple((f.name, f.getvalue()) for f in uploaded)
+    try:
+        df = process_files(files)
+    except Exception as e:
+        st.error(f"Couldn't process the upload: {type(e).__name__}: {e}. "
+                 "Check every file is a lifecycle export with the usual columns.")
+        st.stop()
     st.session_state["processed_df"] = df
-    st.session_state["uploaded_filename"] = uploaded.name
+    st.session_state["uploaded_filenames"] = [f.name for f in uploaded]
+    st.session_state["uploaded_filename"] = ", ".join(f.name for f in uploaded)
     st.rerun()
+
+
+def dataset_label(df: pd.DataFrame) -> str:
+    """Site names for page headers, e.g. 'PAN' or 'PAN, Tom Price'."""
+    sites = sorted(df["source_site"].dropna().unique()) if "source_site" in df.columns else []
+    return ", ".join(sites) if sites else "Uploaded data"
 
 
 def money(x, decimals=0):
@@ -393,11 +556,20 @@ def money(x, decimals=0):
 
 def sidebar_filters(df: pd.DataFrame, key_prefix=""):
     st.sidebar.markdown("### Filters")
-    portfolios = sorted(df["portfolio"].unique())
+    d = df
+    if "source_site" in d.columns and d["source_site"].nunique() > 1:
+        sites = sorted(d["source_site"].unique())
+        sel_site = st.sidebar.multiselect(
+            "Site (uploaded file)", sites, default=sites, key=f"{key_prefix}_source_site"
+        )
+        if sel_site:
+            d = d[d["source_site"].isin(sel_site)]
+
+    portfolios = sorted(d["portfolio"].unique())
     sel_portfolio = st.sidebar.multiselect(
         "Portfolio", portfolios, default=portfolios, key=f"{key_prefix}_portfolio"
     )
-    d = df[df["portfolio"].isin(sel_portfolio)] if sel_portfolio else df
+    d = d[d["portfolio"].isin(sel_portfolio)] if sel_portfolio else d
 
     groups = sorted(d["comp. group"].unique())
     sel_group = st.sidebar.multiselect(

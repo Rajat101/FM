@@ -6,7 +6,7 @@ import pandas as pd
 from common import (
     inject_css, plotly_template, show_chart, load_data, money, sidebar_filters, render_header,
     render_flow_diagram, generate_insights, run_budget_scenario, compute_tipping_economics,
-    COLORS, DECISION_COLORS, CONFIDENCE_COLORS, YEARS, YEARS_INT,
+    COLORS, DECISION_COLORS, CONFIDENCE_COLORS, YEARS, YEARS_INT, dataset_label,
 )
 
 st.set_page_config(page_title="FM Asset Excellence", page_icon=":material/insights:", layout="wide")
@@ -14,7 +14,7 @@ inject_css()
 plotly_template()
 
 df_all = load_data()
-render_header("Facilities asset lifecycle and capital decision model — Pannawonica")
+render_header(f"Facilities asset lifecycle and capital decision model — {dataset_label(df_all)}")
 st.markdown('<span class="badge-tag">LIVE MODEL — figures update as you filter or upload a new workbook</span>', unsafe_allow_html=True)
 
 df = sidebar_filters(df_all, key_prefix="home")
