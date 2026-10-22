@@ -366,7 +366,7 @@ def load_data() -> pd.DataFrame:
         return st.session_state["processed_df"]
 
     st.sidebar.markdown("### Data source")
-    uploaded = st.sidebar.file_uploader("Upload Lifecycle_PAN.xlsx", type=["xlsx"])
+    uploaded = st.sidebar.file_uploader("Upload Lifecycle file excel or csv", type=["xlsx","csv"])
     if uploaded is None:
         render_header("Upload your workbook to begin")
         st.info(
